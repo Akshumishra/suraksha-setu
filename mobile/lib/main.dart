@@ -1,122 +1,104 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-void main() {
-  runApp(const MyApp());
+// Import all required screens for routing
+import 'onboarding_screen.dart';
+import 'login_screen.dart';
+import 'permission_screen.dart';
+
+// =======================================================
+// THE MAIN FUNCTION (ENTRY POINT) - Fixes "No 'main' method found" error
+// =======================================================
+void main() async {
+  // Required for Flutter to initialize bindings before calling native code (like Firebase)
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Initialize Firebase connection
+  await Firebase.initializeApp();
+  
+  runApp(const SurakshaSetu());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+// =======================================================
+// MAIN APP WIDGET
+// =======================================================
+class SurakshaSetu extends StatelessWidget {
+  const SurakshaSetu({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
+      debugShowCheckedModeBanner: false,
+      title: 'Suraksha Setu',
       theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+        primarySwatch: Colors.red,
+        // Using Material 3 color scheme for modern look
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.red),
+        useMaterial3: true,
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      // The app starts with RootDecider to check login/onboarding status
+      home: const RootDecider(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+// =======================================================
+// ROUTING LOGIC (DECIDES FIRST SCREEN)
+// =======================================================
+class RootDecider extends StatefulWidget {
+  const RootDecider({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<RootDecider> createState() => _RootDeciderState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _RootDeciderState extends State<RootDecider> {
+  // Null means we are still loading/checking status
+  bool? onboardingDone;
+  User? user; 
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
+  @override
+  void initState() {
+    super.initState();
+    _checkInitialRoute();
+  }
+
+  Future<void> _checkInitialRoute() async {
+    final prefs = await SharedPreferences.getInstance();
+    
+    // 1. Check if onboarding was completed (default: false)
+    onboardingDone = prefs.getBool('onboardingDone') ?? false;
+    
+    // 2. Check if a user is currently logged in via Firebase Auth
+    user = FirebaseAuth.instance.currentUser;
+    
+    // Rebuild the widget based on the new states
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
-    return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
-          ],
-        ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
-    );
+    // Show loading spinner while checking SharedPreferences
+    if (onboardingDone == null) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    // --- DECISION TREE ---
+    if (!onboardingDone!) {
+      // 1. Onboarding not done -> Show Onboarding Screen (first time launch)
+      return const OnboardingScreen();
+    } else if (user == null) {
+      // 2. Onboarding done, but no user is logged in -> Show Login Screen
+      return const LoginScreen();
+    } else {
+      // 3. Onboarding done AND user is logged in -> Go straight to Permissions
+      return const PermissionScreen();
+    }
   }
 }
