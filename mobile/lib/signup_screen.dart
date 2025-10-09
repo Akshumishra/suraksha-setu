@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'permission_screen.dart';
 
 class SignupScreen extends StatefulWidget {
@@ -41,6 +42,43 @@ class _SignupScreenState extends State<SignupScreen> {
     }
   }
 
+  Future<void> signupWithGoogle() async {
+    try {
+      setState(() => isLoading = true);
+      final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
+      if (googleUser == null) {
+        setState(() => isLoading = false);
+        return; // User cancelled
+      }
+      final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+      final credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+      final userCred = await _auth.signInWithCredential(credential);
+
+      // Save user info to Firestore if new user
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(userCred.user!.uid)
+          .set({
+            'name': userCred.user!.displayName ?? '',
+            'email': userCred.user!.email ?? '',
+          }, SetOptions(merge: true));
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const PermissionScreen()),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Google signup failed: $e')),
+      );
+    } finally {
+      setState(() => isLoading = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -67,12 +105,30 @@ class _SignupScreenState extends State<SignupScreen> {
             const SizedBox(height: 20),
             isLoading
                 ? const CircularProgressIndicator()
-                : ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red,
-                        padding: const EdgeInsets.all(16)),
-                    onPressed: signup,
-                    child: const Text('Create Account'),
+                : Column(
+                    children: [
+                      ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red,
+                            padding: const EdgeInsets.all(16)),
+                        onPressed: signup,
+                        child: const Text('Create Account'),
+                      ),
+                      const SizedBox(height: 10),
+                      ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.white,
+                            foregroundColor: Colors.black,
+                            padding: const EdgeInsets.all(16)),
+                        icon: Image.asset(
+                          'assets/google_logo.png', // Add a Google logo to your assets
+                          height: 24,
+                          width: 24,
+                        ),
+                        label: const Text('Sign Up with Google'),
+                        onPressed: signupWithGoogle,
+                      ),
+                    ],
                   ),
           ],
         ),
