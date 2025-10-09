@@ -67,13 +67,22 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Suraksha Setu')),
+      appBar: AppBar(title: const Text('Suraksha Setu'),actions: [
+        IconButton(
+          icon: const Icon(Icons.logout),
+          tooltip: 'Logout',
+          onPressed: () async {
+            await _auth.signOut();
+            Navigator.of(context).pushNamedAndRemoveUntil('/login', (route) => false);
+          },
+        ),
+      ],),
       body: Center(
         child: isLoading
             ? const CircularProgressIndicator()
             : ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.red,
+                  backgroundColor: const Color.fromARGB(255, 77, 193, 197),
                   padding:
                       const EdgeInsets.symmetric(horizontal: 60, vertical: 25),
                   textStyle: const TextStyle(

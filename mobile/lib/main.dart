@@ -33,7 +33,7 @@ class SurakshaSetu extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'Suraksha Setu',
       theme: ThemeData(
-        primarySwatch: Colors.red,
+        primaryColor: const Color.fromARGB(255, 54, 216, 244),
         // Using Material 3 color scheme for modern look
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.red),
         useMaterial3: true,
