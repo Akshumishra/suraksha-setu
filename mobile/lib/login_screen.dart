@@ -3,7 +3,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'permission_screen.dart';
-import 'phone_login.dart';
 import 'signup_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -20,6 +19,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   bool isLoading = false;
 
+  /// Email/Password login
   Future<void> loginWithEmail() async {
     try {
       setState(() => isLoading = true);
@@ -28,15 +28,16 @@ class _LoginScreenState extends State<LoginScreen> {
         password: passwordController.text.trim(),
       );
       _goToNext();
-    } catch (e) {
+    } on FirebaseAuthException catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Login failed: $e')),
+        SnackBar(content: Text('Login failed: ${e.message}')),
       );
     } finally {
       setState(() => isLoading = false);
     }
   }
 
+  /// Google login
   Future<void> loginWithGoogle() async {
     try {
       final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
@@ -64,10 +65,12 @@ class _LoginScreenState extends State<LoginScreen> {
       }, SetOptions(merge: true));
 
       _goToNext();
-    } catch (e) {
+    } on FirebaseAuthException catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Google login failed: $e')),
+        SnackBar(content: Text('Google login failed: ${e.message}')),
       );
+    } finally {
+      setState(() => isLoading = false);
     }
   }
 
@@ -76,6 +79,13 @@ class _LoginScreenState extends State<LoginScreen> {
       context,
       MaterialPageRoute(builder: (_) => const PermissionScreen()),
     );
+  }
+
+  @override
+  void dispose() {
+    emailController.dispose();
+    passwordController.dispose();
+    super.dispose();
   }
 
   @override
@@ -93,6 +103,7 @@ class _LoginScreenState extends State<LoginScreen> {
           children: [
             const Icon(Icons.shield, size: 90, color: Colors.red),
             const SizedBox(height: 20),
+            // Email field
             TextField(
               controller: emailController,
               decoration: const InputDecoration(
@@ -101,6 +112,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ),
             const SizedBox(height: 12),
+            // Password field
             TextField(
               controller: passwordController,
               obscureText: true,
@@ -110,6 +122,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ),
             const SizedBox(height: 20),
+            // Login button
             isLoading
                 ? const CircularProgressIndicator()
                 : ElevatedButton(
@@ -122,6 +135,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     child: const Text('Login'),
                   ),
             const SizedBox(height: 10),
+            // Navigate to signup
             TextButton(
               onPressed: () {
                 Navigator.push(
@@ -132,20 +146,14 @@ class _LoginScreenState extends State<LoginScreen> {
               child: const Text('Don\'t have an account? Sign up'),
             ),
             const SizedBox(height: 30),
-            ElevatedButton.icon(
-              icon: const Icon(Icons.phone_android),
-              label: const Text('Login with Phone'),
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const PhoneLoginScreen()),
-                );
-              },
-            ),
-            const SizedBox(height: 10),
+            // Google login button
             ElevatedButton.icon(
               icon: const Icon(Icons.login),
               label: const Text('Login with Google'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue,
+                minimumSize: const Size.fromHeight(50),
+              ),
               onPressed: loginWithGoogle,
             ),
           ],

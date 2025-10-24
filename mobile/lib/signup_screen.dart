@@ -13,66 +13,83 @@ class SignupScreen extends StatefulWidget {
 
 class _SignupScreenState extends State<SignupScreen> {
   final _auth = FirebaseAuth.instance;
-  final email = TextEditingController();
-  final password = TextEditingController();
-  final name = TextEditingController();
+  final nameController = TextEditingController();
+  final emailController = TextEditingController();
+  final passwordController = TextEditingController();
   bool isLoading = false;
 
+  /// Email/Password signup
   Future<void> signup() async {
+    if (nameController.text.isEmpty ||
+        emailController.text.isEmpty ||
+        passwordController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please fill all fields')),
+      );
+      return;
+    }
+
     try {
       setState(() => isLoading = true);
       final userCred = await _auth.createUserWithEmailAndPassword(
-        email: email.text.trim(),
-        password: password.text.trim(),
+        email: emailController.text.trim(),
+        password: passwordController.text.trim(),
       );
+
       await FirebaseFirestore.instance
           .collection('users')
           .doc(userCred.user!.uid)
-          .set({'name': name.text, 'email': email.text});
+          .set({
+        'name': nameController.text.trim(),
+        'email': emailController.text.trim(),
+      });
+
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => const PermissionScreen()),
       );
-    } catch (e) {
+    } on FirebaseAuthException catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Signup failed: $e')),
+        SnackBar(content: Text('Signup failed: ${e.message}')),
       );
     } finally {
       setState(() => isLoading = false);
     }
   }
 
+  /// Google signup
   Future<void> signupWithGoogle() async {
     try {
       setState(() => isLoading = true);
       final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
-      if (googleUser == null) {
-        setState(() => isLoading = false);
-        return; // User cancelled
-      }
-      final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+      if (googleUser == null) return; // User cancelled
+
+      final GoogleSignInAuthentication googleAuth =
+          await googleUser.authentication;
+
       final credential = GoogleAuthProvider.credential(
         accessToken: googleAuth.accessToken,
         idToken: googleAuth.idToken,
       );
+
       final userCred = await _auth.signInWithCredential(credential);
 
-      // Save user info to Firestore if new user
+      // Save user info to Firestore
       await FirebaseFirestore.instance
           .collection('users')
           .doc(userCred.user!.uid)
           .set({
-            'name': userCred.user!.displayName ?? '',
-            'email': userCred.user!.email ?? '',
-          }, SetOptions(merge: true));
+        'name': userCred.user!.displayName ?? '',
+        'email': userCred.user!.email ?? '',
+      }, SetOptions(merge: true));
 
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => const PermissionScreen()),
       );
-    } catch (e) {
+    } on FirebaseAuthException catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Google signup failed: $e')),
+        SnackBar(content: Text('Google signup failed: ${e.message}')),
       );
     } finally {
       setState(() => isLoading = false);
@@ -80,27 +97,51 @@ class _SignupScreenState extends State<SignupScreen> {
   }
 
   @override
+  void dispose() {
+    nameController.dispose();
+    emailController.dispose();
+    passwordController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Sign Up'), backgroundColor: Colors.red),
-      body: Padding(
+      appBar: AppBar(
+        title: const Text('Sign Up'),
+        backgroundColor: Colors.red,
+      ),
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(24.0),
         child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
+            const Icon(Icons.shield, size: 90, color: Colors.red),
+            const SizedBox(height: 20),
             TextField(
-              controller: name,
-              decoration: const InputDecoration(labelText: 'Full Name'),
+              controller: nameController,
+              decoration: const InputDecoration(
+                labelText: 'Full Name',
+                border: OutlineInputBorder(),
+              ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             TextField(
-              controller: email,
-              decoration: const InputDecoration(labelText: 'Email'),
+              controller: emailController,
+              keyboardType: TextInputType.emailAddress,
+              decoration: const InputDecoration(
+                labelText: 'Email',
+                border: OutlineInputBorder(),
+              ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             TextField(
-              controller: password,
+              controller: passwordController,
               obscureText: true,
-              decoration: const InputDecoration(labelText: 'Password'),
+              decoration: const InputDecoration(
+                labelText: 'Password',
+                border: OutlineInputBorder(),
+              ),
             ),
             const SizedBox(height: 20),
             isLoading
@@ -109,23 +150,22 @@ class _SignupScreenState extends State<SignupScreen> {
                     children: [
                       ElevatedButton(
                         style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.red,
-                            padding: const EdgeInsets.all(16)),
+                          backgroundColor: Colors.red,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 60, vertical: 16),
+                        ),
                         onPressed: signup,
                         child: const Text('Create Account'),
                       ),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 12),
                       ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.white,
-                            foregroundColor: Colors.black,
-                            padding: const EdgeInsets.all(16)),
-                        icon: Image.asset(
-                          'assets/google_logo.png', // Add a Google logo to your assets
-                          height: 24,
-                          width: 24,
-                        ),
+                        icon: const Icon(Icons.login, color: Colors.red),
                         label: const Text('Sign Up with Google'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: Colors.black,
+                          minimumSize: const Size.fromHeight(50),
+                        ),
                         onPressed: signupWithGoogle,
                       ),
                     ],

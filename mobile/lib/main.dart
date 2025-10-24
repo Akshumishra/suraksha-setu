@@ -2,28 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
-// Import all required screens for routing
+// Import your screens
 import 'onboarding_screen.dart';
-import 'login_screen.dart';
 import 'permission_screen.dart';
+import 'signup_screen.dart';
 
-// =======================================================
-// THE MAIN FUNCTION (ENTRY POINT) - Fixes "No 'main' method found" error
-// =======================================================
 void main() async {
-  // Required for Flutter to initialize bindings before calling native code (like Firebase)
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // Initialize Firebase connection
   await Firebase.initializeApp();
-  
   runApp(const SurakshaSetu());
 }
 
-// =======================================================
-// MAIN APP WIDGET
-// =======================================================
 class SurakshaSetu extends StatelessWidget {
   const SurakshaSetu({super.key});
 
@@ -34,19 +25,14 @@ class SurakshaSetu extends StatelessWidget {
       title: 'Suraksha Setu',
       theme: ThemeData(
         primaryColor: const Color.fromARGB(255, 54, 216, 244),
-        // Using Material 3 color scheme for modern look
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.red),
         useMaterial3: true,
       ),
-      // The app starts with RootDecider to check login/onboarding status
       home: const RootDecider(),
     );
   }
 }
 
-// =======================================================
-// ROUTING LOGIC (DECIDES FIRST SCREEN)
-// =======================================================
 class RootDecider extends StatefulWidget {
   const RootDecider({super.key});
 
@@ -55,50 +41,194 @@ class RootDecider extends StatefulWidget {
 }
 
 class _RootDeciderState extends State<RootDecider> {
-  // Null means we are still loading/checking status
   bool? onboardingDone;
-  User? user; 
 
   @override
   void initState() {
     super.initState();
-    _checkInitialRoute();
+    _loadOnboardingStatus();
   }
 
-  Future<void> _checkInitialRoute() async {
-    final prefs = await SharedPreferences.getInstance();
-    
-    // 1. Check if onboarding was completed (default: false)
-    onboardingDone = prefs.getBool('onboardingDone') ?? false;
-    
-    // 2. Check if a user is currently logged in via Firebase Auth
-    user = FirebaseAuth.instance.currentUser;
-    
-    // Rebuild the widget based on the new states
-    if (mounted) {
-      setState(() {});
+  Future<void> _loadOnboardingStatus() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      onboardingDone = prefs.getBool('onboardingDone') ?? false;
+    } catch (e) {
+      onboardingDone = false;
+      debugPrint('Error loading onboarding status: $e');
     }
+    if (mounted) setState(() {});
   }
 
   @override
   Widget build(BuildContext context) {
-    // Show loading spinner while checking SharedPreferences
     if (onboardingDone == null) {
       return const Scaffold(
         body: Center(child: CircularProgressIndicator()),
       );
     }
 
-    // --- DECISION TREE ---
-    if (!onboardingDone!) {
-      // 1. Onboarding not done -> Show Onboarding Screen (first time launch)
-      return const OnboardingScreen();
-    } else if (user == null) {
-      // 2. Onboarding done, but no user is logged in -> Show Login Screen
-      return const LoginScreen();
-    } else {
-      // 3. Onboarding done AND user is logged in -> Go straight to Permissions
-      return const PermissionScreen();
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        final user = snapshot.data;
+
+        if (!onboardingDone!) {
+          return const OnboardingScreen();
+        } else if (user == null) {
+          return const LoginScreen();
+        } else {
+          return const PermissionScreen();
+        }
+      },
+    );
+  }
+}
+
+/// =======================================================
+/// LOGIN SCREEN (EMAIL + GOOGLE)
+/// =======================================================
+class LoginScreen extends StatefulWidget {
+  const LoginScreen({super.key});
+
+  @override
+  State<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends State<LoginScreen> {
+  final TextEditingController emailController = TextEditingController();
+  final TextEditingController passwordController = TextEditingController();
+
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final GoogleSignIn _googleSignIn = GoogleSignIn();
+
+  bool isLoading = false;
+
+  /// Navigate to PermissionScreen
+  void _goToNextScreen() {
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => const PermissionScreen()),
+    );
+  }
+
+  /// Email/Password Login
+  Future<void> signInWithEmail() async {
+    setState(() => isLoading = true);
+    try {
+      await _auth.signInWithEmailAndPassword(
+        email: emailController.text.trim(),
+        password: passwordController.text.trim(),
+      );
+      _goToNextScreen();
+    } on FirebaseAuthException catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message ?? 'Login failed')),
+      );
+    } finally {
+      setState(() => isLoading = false);
     }
+  }
+
+  /// Google Sign-In
+  Future<void> signInWithGoogle() async {
+    setState(() => isLoading = true);
+    try {
+      final googleUser = await _googleSignIn.signIn();
+      if (googleUser == null) return;
+
+      final googleAuth = await googleUser.authentication;
+      final credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+
+      await _auth.signInWithCredential(credential);
+      _goToNextScreen();
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Google Sign-In failed: $e')),
+      );
+    } finally {
+      setState(() => isLoading = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    emailController.dispose();
+    passwordController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Login'),
+        backgroundColor: Colors.red,
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            TextField(
+              controller: emailController,
+              keyboardType: TextInputType.emailAddress,
+              decoration: const InputDecoration(
+                labelText: 'Email',
+              ),
+            ),
+            const SizedBox(height: 20),
+            TextField(
+              controller: passwordController,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Password',
+              ),
+            ),
+            const SizedBox(height: 20),
+            isLoading
+                ? const CircularProgressIndicator()
+                : ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                      minimumSize: const Size.fromHeight(50),
+                    ),
+                    onPressed: signInWithEmail,
+                    child: const Text('Login'),
+                  ),
+            const SizedBox(height: 20),
+            const Text('OR'),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue,
+                minimumSize: const Size.fromHeight(50),
+              ),
+              onPressed: signInWithGoogle,
+              child: const Text('Login with Google'),
+            ),
+            const SizedBox(height: 20),
+            TextButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const SignupScreen()),
+                );
+              },
+              child: const Text("Don't have an account? Sign Up"),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
