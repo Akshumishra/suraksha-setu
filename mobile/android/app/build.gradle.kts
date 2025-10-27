@@ -1,24 +1,21 @@
-buildscript {
-    repositories {
-        google()
-        mavenCentral()
-    }
-    dependencies {
-        classpath("com.google.gms:google-services:4.4.0")
-    }
-}
-
 plugins {
     id("com.android.application")
-    id("kotlin-android")
-    // Flutter plugin must come after Android/Kotlin
+    id("org.jetbrains.kotlin.android")
+    id("com.google.gms.google-services")
     id("dev.flutter.flutter-gradle-plugin")
 }
 
 android {
     namespace = "com.surakshasetu.mobile"
-    compileSdk = flutter.compileSdkVersion
-    ndkVersion = "27.0.12077973"
+    compileSdk = 36
+
+    defaultConfig {
+        applicationId = "com.surakshasetu.mobile"
+        minSdk = flutter.minSdkVersion
+        targetSdk = 34
+        versionCode = 1
+        versionName = "1.0"
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
@@ -26,25 +23,40 @@ android {
     }
 
     kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_11.toString()
-    }
-
-    defaultConfig {
-        applicationId = "com.surakshasetu.mobile"
-        minSdk = 23
-        targetSdk = flutter.targetSdkVersion
-        versionCode = flutter.versionCode
-        versionName = flutter.versionName
+        jvmTarget = "11"
     }
 
     buildTypes {
-        release {
-            signingConfig = signingConfigs.getByName("debug")
-        }
+        debug {
+        // Disable shrinking in debug builds
+        isMinifyEnabled = false
+        isShrinkResources = false
     }
-}
+    release {
+        // Enable shrinking safely only if you plan to release
+        isMinifyEnabled = true
+        isShrinkResources = true
+        proguardFiles(
+            getDefaultProguardFile("proguard-android-optimize.txt"),
+            "proguard-rules.pro"
+        )
+        signingConfig = signingConfigs.getByName("debug")
+    }
+}}
 
-flutter {
-    source = "../.."
+dependencies {
+    // Firebase (BoM manages versions)
+    implementation(platform("com.google.firebase:firebase-bom:33.4.0"))
+   
+    implementation("com.google.firebase:firebase-auth-ktx:22.3.1")
+    implementation("com.google.firebase:firebase-firestore-ktx:25.1.0")
+    implementation("com.google.firebase:firebase-storage-ktx:21.0.0")
+    // Google Play Services - Location + Tasks
+    implementation("com.google.android.gms:play-services-location:21.3.0")
+    implementation("com.google.android.gms:play-services-tasks:18.1.0")
+
+    // Kotlin stdlib
+    implementation("org.jetbrains.kotlin:kotlin-stdlib:2.1.0")
 }
 apply(plugin = "com.google.gms.google-services")
+

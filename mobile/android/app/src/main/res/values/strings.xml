@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">Suraksha Setu</string>
+
+    <!-- Add this line 👇 -->
+    <string name="accessibility_service_description">
+        Suraksha Setu volume key SOS service
+    </string>
+</resources>

@@ -8,11 +8,16 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'onboarding_screen.dart';
 import 'permission_screen.dart';
 import 'signup_screen.dart';
+import 'sos_trigger_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
-  runApp(const SurakshaSetu());
+ 
+  // Start listening for volume button presses
+  SosTriggerService().startListening();
+
+  runApp(SurakshaSetu());
 }
 
 class SurakshaSetu extends StatelessWidget {
