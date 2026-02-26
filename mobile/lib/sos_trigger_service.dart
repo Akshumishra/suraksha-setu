@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:volume_controller/volume_controller.dart';
-import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 class SosTriggerService {
   static final SosTriggerService _instance = SosTriggerService._internal();

@@ -13,6 +13,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   Future<void> _continueToLogin() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('onboardingDone', true);
+    if (!mounted) return;
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(builder: (_) => const LoginScreen()),
@@ -30,7 +31,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           children: [
             // App Logo
             Image.asset(
-              'assets/logo.png', // place logo in assets folder
+              'assets/google_logo.png',
               height: 180,
             ),
             const SizedBox(height: 40),

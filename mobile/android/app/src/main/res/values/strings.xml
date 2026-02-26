@@ -1,8 +1,18 @@
-<resources>
+﻿<resources>
     <string name="app_name">Suraksha Setu</string>
-
-    <!-- Add this line 👇 -->
-    <string name="accessibility_service_description">
-        Suraksha Setu volume key SOS service
-    </string>
+    <string name="accessibility_service_description">Suraksha Setu volume key SOS service</string>
+    <string name="sos_notification_title">Suraksha Setu SOS Active</string>
+    <string name="sos_notification_action_camera">Open Camera</string>
+    <string name="sos_notification_channel_name">SOS Emergency Service</string>
+    <string name="sos_notification_channel_description">Foreground SOS status, camera capture, and responder updates</string>
+    <string name="sos_notification_starting">SOS triggered. Starting emergency workflow...</string>
+    <string name="sos_notification_locating">SOS active. Fetching your live location...</string>
+    <string name="sos_notification_recording">SOS active. Recording emergency evidence...</string>
+    <string name="sos_notification_recording_finished">SOS active. Recording completed.</string>
+    <string name="sos_notification_camera_failed">SOS active. Camera unavailable; alerts continue.</string>
+    <string name="sos_notification_pipeline_failed">SOS active. Some emergency steps failed.</string>
+    <string name="sos_notification_auth_required">SOS failed: login required to sync with responders.</string>
+    <string name="sos_notification_open_camera_failed">SOS active. Tap notification to reopen camera.</string>
+    <string name="sos_recording_indicator">&#9679; SOS Recording</string>
+    <string name="sos_camera_caption">Emergency evidence capture is running. Keep this screen visible while SOS is active.</string>
 </resources>

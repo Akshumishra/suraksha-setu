@@ -3,98 +3,114 @@ package com.surakshasetu.mobile
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
-import android.os.Handler
-import android.os.Looper
+import android.os.Build
+import android.os.SystemClock
+import android.util.Log
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
-import android.util.Log
 
-/**
- * Accessibility service that listens for hardware key events (volume up + volume down).
- * When both are pressed within a short window, it triggers the SOS Foreground Service.
- *
- * IMPORTANT:
- * - User must enable this service under Settings -> Accessibility.
- * - accessibility_service_config.xml must allow filterKeyEvents.
- */
 class VolumeAccessibilityService : AccessibilityService() {
+
     private val TAG = "VolumeAccessibilitySvc"
+    private val COMBO_WINDOW_MS = 1500L
+    private val COOLDOWN_MS = 15_000L
 
-    // Timestamp of last volume up/down press
-    private var lastVolUpTs = 0L
-    private var lastVolDownTs = 0L
-
-    // threshold to treat two presses as "simultaneous" (ms)
-    private val SIMULTANEOUS_THRESHOLD = 800L
-
-    // Anti-spam cooldown (ms)
-    private val COOLDOWN_MS = 10_000L
-    private var lastTriggerTs = 0L
+    private var lastVolUpTime = 0L
+    private var lastVolDownTime = 0L
+    private var lastTriggerTime = 0L
+    private var isVolUpPressed = false
+    private var isVolDownPressed = false
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        Log.i(TAG, "Accessibility Service connected")
+
         val info = AccessibilityServiceInfo()
         info.eventTypes = AccessibilityEvent.TYPES_ALL_MASK
         info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
-        info.flags =
-            AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+        info.flags = AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
         serviceInfo = info
+
+        Log.i(TAG, "Accessibility Service Connected")
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // no-op
-    }
-
-    override fun onInterrupt() {
-        // no-op
-    }
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    override fun onInterrupt() {}
 
     override fun onKeyEvent(event: KeyEvent): Boolean {
-        // We only react to KEY_DOWN to avoid duplicates
-        if (event.action != KeyEvent.ACTION_DOWN) return super.onKeyEvent(event)
-
-        val now = System.currentTimeMillis()
-
-        when (event.keyCode) {
-            KeyEvent.KEYCODE_VOLUME_UP -> {
-                lastVolUpTs = now
-                checkSimultaneousTrigger(now)
-                return true // consumed
-            }
-            KeyEvent.KEYCODE_VOLUME_DOWN -> {
-                lastVolDownTs = now
-                checkSimultaneousTrigger(now)
-                return true
-            }
-            else -> return super.onKeyEvent(event)
+        val isVolumeKey = event.keyCode == KeyEvent.KEYCODE_VOLUME_UP ||
+            event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN
+        if (!isVolumeKey) {
+            return super.onKeyEvent(event)
         }
+
+        when (event.action) {
+            KeyEvent.ACTION_DOWN -> {
+                val now = SystemClock.elapsedRealtime()
+                if (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
+                    isVolUpPressed = true
+                    if (event.repeatCount == 0) {
+                        lastVolUpTime = now
+                    }
+                } else {
+                    isVolDownPressed = true
+                    if (event.repeatCount == 0) {
+                        lastVolDownTime = now
+                    }
+                }
+
+                val hasBothDown = isVolUpPressed && isVolDownPressed
+                val hasBothTimes = lastVolUpTime != 0L && lastVolDownTime != 0L
+                val diff = if (hasBothTimes) kotlin.math.abs(lastVolUpTime - lastVolDownTime) else Long.MAX_VALUE
+                val comboDetected = hasBothDown || (hasBothTimes && diff <= COMBO_WINDOW_MS)
+
+                if (comboDetected) {
+                    Log.i(TAG, "Volume Up + Down combo detected")
+                    triggerSOS()
+                    lastVolUpTime = 0L
+                    lastVolDownTime = 0L
+                    return true
+                }
+            }
+            KeyEvent.ACTION_UP -> {
+                if (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
+                    isVolUpPressed = false
+                } else {
+                    isVolDownPressed = false
+                }
+            }
+        }
+
+        return super.onKeyEvent(event)
     }
 
-    private fun checkSimultaneousTrigger(now: Long) {
-        if (now - lastTriggerTs < COOLDOWN_MS) {
-            Log.d(TAG, "Cooldown active, ignore")
+    private fun triggerSOS() {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastTriggerTime < COOLDOWN_MS) {
+            Log.i(TAG, "Ignoring trigger during cooldown")
             return
         }
-        val diff = kotlin.math.abs(lastVolUpTs - lastVolDownTs)
-        if (diff <= SIMULTANEOUS_THRESHOLD && lastVolUpTs != 0L && lastVolDownTs != 0L) {
-            lastTriggerTs = now
-            Log.i(TAG, "Volume combo detected, starting SOS service")
-            startSosService()
-            // reset
-            lastVolUpTs = 0L
-            lastVolDownTs = 0L
-        }
-    }
+        lastTriggerTime = now
 
-    private fun startSosService() {
         try {
             val intent = Intent(this, SosForegroundService::class.java)
             intent.action = SosForegroundService.ACTION_TRIGGER_SOS
-            // Use startForegroundService to survive background restrictions
             startForegroundService(intent)
+            Log.i(TAG, "Requested SOS foreground service start")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to start SOS service: $e")
+            Log.e(TAG, "Failed to startForegroundService for SOS: $e")
+            try {
+                val fallbackIntent = Intent(this, SosForegroundService::class.java).apply {
+                    action = SosForegroundService.ACTION_TRIGGER_SOS
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(fallbackIntent)
+                } else {
+                    startService(fallbackIntent)
+                }
+                Log.i(TAG, "Fallback SOS service start requested")
+            } catch (fallbackError: Exception) {
+                Log.e(TAG, "Fallback SOS service start failed: $fallbackError")
+            }
         }
     }
 }

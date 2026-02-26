@@ -1,4 +1,4 @@
-"use client"; // must be first line
+"use client";
 
 import { useEffect, useState } from "react";
 import { db } from "../firebase";
@@ -10,38 +10,39 @@ export default function Home() {
 
   useEffect(() => {
     const unsubscribe = onSnapshot(
-      collection(db, "incidents"),
+      collection(db, "sos"),
       (querySnapshot) => {
         const items = querySnapshot.docs.map((doc) => doc.data());
         setData(items);
         setConnected(true);
       },
-      (err) => console.error("❌ Firebase real-time error:", err)
+      (err) => console.error("Firebase real-time error:", err),
     );
 
-    return () => unsubscribe(); // cleanup
+    return () => unsubscribe();
   }, []);
 
   return (
     <div style={{ fontFamily: "sans-serif", padding: "40px" }}>
-      <h1>🚨 SurakshaSetu Dashboard</h1>
+      <h1>SurakshaSetu Dashboard</h1>
       {connected ? (
-        <p style={{ color: "green" }}>✅ Connected to Firebase</p>
+        <p style={{ color: "green" }}>Connected to Firebase</p>
       ) : (
-        <p style={{ color: "red" }}>🔴 Not connected</p>
+        <p style={{ color: "red" }}>Not connected</p>
       )}
       <hr />
-      <h2>Incident Reports (Live Feed):</h2>
+      <h2>SOS Reports (Live Feed):</h2>
       {data.length > 0 ? (
         <ul>
           {data.map((item, index) => (
             <li key={index}>
-              <strong>{item.message}</strong> — ({item.lat}, {item.lon})
+              <strong>{item.status ?? "active"}</strong> - (
+              {item.lat ?? "NA"}, {item.lon ?? "NA"})
             </li>
           ))}
         </ul>
       ) : (
-        <p>No incidents yet</p>
+        <p>No SOS reports yet</p>
       )}
     </div>
   );

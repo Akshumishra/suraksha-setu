@@ -1,0 +1,90 @@
+{
+  "project_info": {
+    "project_number": "179434683012",
+    "project_id": "suraksha-setu-9808d",
+    "storage_bucket": "suraksha-setu-9808d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:179434683012:android:5dfa0a0aa291b4f04ae0d1",
+        "android_client_info": {
+          "package_name": "com.example.police_dashboard"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "179434683012-pub4jlck9oljt5g9dr3iojtihcs8m8c8.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyClmS_RlvHRCdeEEJcFcQ3B8gm3dJDAyK8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "179434683012-pub4jlck9oljt5g9dr3iojtihcs8m8c8.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "179434683012-b8j1r8t72riucj4pdammr2cpaa2mipml.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.policeDashboard"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:179434683012:android:60a0507cbfc55d904ae0d1",
+        "android_client_info": {
+          "package_name": "com.surakshasetu.mobile"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "179434683012-ha1tte90nl26qboiuip478n6q0ted49l.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.surakshasetu.mobile",
+            "certificate_hash": "add9528c12fc32ac76ed6a0c03cdaad4d2f6e60f"
+          }
+        },
+        {
+          "client_id": "179434683012-pub4jlck9oljt5g9dr3iojtihcs8m8c8.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyClmS_RlvHRCdeEEJcFcQ3B8gm3dJDAyK8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "179434683012-pub4jlck9oljt5g9dr3iojtihcs8m8c8.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "179434683012-b8j1r8t72riucj4pdammr2cpaa2mipml.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.policeDashboard"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
