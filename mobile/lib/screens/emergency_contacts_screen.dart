@@ -120,82 +120,92 @@ class EmergencyContactsScreen extends StatelessWidget {
           context: context,
           builder: (context) => StatefulBuilder(
             builder: (context, setDialogState) => AlertDialog(
+              scrollable: true,
               title: Text(
                 existing == null ? 'Add Emergency Contact' : 'Edit Contact',
               ),
-              content: Form(
-                key: formKey,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      value: linkToAppUser,
-                      title: const Text('Link app user'),
-                      subtitle: const Text(
-                        'Use an existing Suraksha Setu account as this contact.',
+              content: SizedBox(
+                width: 420,
+                child: Form(
+                  key: formKey,
+                  autovalidateMode: AutovalidateMode.onUserInteraction,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        value: linkToAppUser,
+                        title: const Text('Link app user'),
+                        subtitle: const Text(
+                          'Use an existing Suraksha Setu account as this contact.',
+                        ),
+                        onChanged: (value) {
+                          setDialogState(() => linkToAppUser = value);
+                        },
                       ),
-                      onChanged: (value) {
-                        setDialogState(() => linkToAppUser = value);
-                      },
-                    ),
-                    if (linkToAppUser)
+                      if (linkToAppUser) ...[
+                        TextFormField(
+                          controller: appEmailController,
+                          decoration:
+                              const InputDecoration(labelText: 'App user email'),
+                          keyboardType: TextInputType.emailAddress,
+                          validator: (value) {
+                            if (!linkToAppUser) {
+                              return null;
+                            }
+                            return (value == null || value.trim().isEmpty)
+                                ? 'Email is required for app user contact'
+                                : null;
+                          },
+                        ),
+                        const SizedBox(height: 12),
+                      ],
                       TextFormField(
-                        controller: appEmailController,
-                        decoration:
-                            const InputDecoration(labelText: 'App user email'),
-                        keyboardType: TextInputType.emailAddress,
+                        controller: nameController,
+                        decoration: InputDecoration(
+                          labelText: linkToAppUser
+                              ? 'Contact name (optional override)'
+                              : 'Name',
+                        ),
                         validator: (value) {
-                          if (!linkToAppUser) {
+                          if (linkToAppUser) {
                             return null;
                           }
                           return (value == null || value.trim().isEmpty)
-                              ? 'Email is required for app user contact'
+                              ? 'Name is required'
                               : null;
                         },
                       ),
-                    TextFormField(
-                      controller: nameController,
-                      decoration: InputDecoration(
-                        labelText: linkToAppUser
-                            ? 'Contact name (optional override)'
-                            : 'Name',
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: phoneController,
+                        decoration: InputDecoration(
+                          labelText: linkToAppUser
+                              ? 'Phone (optional fallback)'
+                              : 'Phone',
+                        ),
+                        keyboardType: TextInputType.phone,
+                        validator: (value) {
+                          if (linkToAppUser) {
+                            return null;
+                          }
+                          return (value == null || value.trim().isEmpty)
+                              ? 'Phone is required'
+                              : null;
+                        },
                       ),
-                      validator: (value) {
-                        if (linkToAppUser) {
-                          return null;
-                        }
-                        return (value == null || value.trim().isEmpty)
-                            ? 'Name is required'
-                            : null;
-                      },
-                    ),
-                    TextFormField(
-                      controller: phoneController,
-                      decoration: InputDecoration(
-                        labelText: linkToAppUser
-                            ? 'Phone (optional fallback)'
-                            : 'Phone',
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: relationController,
+                        decoration: const InputDecoration(labelText: 'Relation'),
+                        validator: (value) =>
+                            (value == null || value.trim().isEmpty)
+                                ? 'Relation is required'
+                                : null,
                       ),
-                      keyboardType: TextInputType.phone,
-                      validator: (value) {
-                        if (linkToAppUser) {
-                          return null;
-                        }
-                        return (value == null || value.trim().isEmpty)
-                            ? 'Phone is required'
-                            : null;
-                      },
-                    ),
-                    TextFormField(
-                      controller: relationController,
-                      decoration: const InputDecoration(labelText: 'Relation'),
-                      validator: (value) =>
-                          (value == null || value.trim().isEmpty)
-                              ? 'Relation is required'
-                              : null,
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
               actions: [
@@ -224,19 +234,16 @@ class EmergencyContactsScreen extends StatelessWidget {
 
     try {
       if (linkToAppUser) {
-        final profile = await EmergencyContactService.instance.findAppUserByEmail(
+        final profile =
+            await EmergencyContactService.instance.findAppUserByEmail(
           appEmailController.text,
         );
-        final resolvedName =
-            nameController.text.trim().isEmpty ? profile.name : nameController.text;
+        final resolvedName = nameController.text.trim().isEmpty
+            ? profile.name
+            : nameController.text;
         final resolvedPhone = profile.phone.trim().isNotEmpty
             ? profile.phone
             : phoneController.text.trim();
-        if (resolvedPhone.isEmpty) {
-          throw StateError(
-            'Linked user has no phone in profile. Add a fallback phone.',
-          );
-        }
 
         if (existing == null) {
           await EmergencyContactService.instance.addContact(

@@ -18,8 +18,8 @@ allprojects {
     }
 }
 
-// ✅ Custom build directory logic (you can keep this as-is)
-val newBuildDir: Directory = rootProject.layout.buildDirectory.dir("../../build").get()
+// Keep Android outputs in Flutter's standard mobile/build location.
+val newBuildDir: Directory = rootProject.layout.projectDirectory.dir("../build")
 rootProject.layout.buildDirectory.value(newBuildDir)
 
 subprojects {

@@ -29,13 +29,15 @@ class SosAlertService {
     final userId = _requireUserId();
     return _alertsCollectionForUser(userId).snapshots().map((snapshot) {
       final alerts = snapshot.docs.map(SosAlert.fromDoc).toList(growable: false);
-      alerts.sort((a, b) {
-        final aTime = a.timestamp?.millisecondsSinceEpoch ?? 0;
-        final bTime = b.timestamp?.millisecondsSinceEpoch ?? 0;
-        return bTime.compareTo(aTime);
-      });
-      return alerts;
+      return _sortAlerts(alerts);
     });
+  }
+
+  Future<List<SosAlert>> fetchIncomingAlertsOnce() async {
+    final userId = _requireUserId();
+    final snapshot = await _alertsCollectionForUser(userId).get();
+    final alerts = snapshot.docs.map(SosAlert.fromDoc).toList(growable: false);
+    return _sortAlerts(alerts);
   }
 
   Future<void> markAsRead(String alertId) async {
@@ -43,5 +45,14 @@ class SosAlertService {
     await _alertsCollectionForUser(userId).doc(alertId).update(
       <String, dynamic>{'isRead': true},
     );
+  }
+
+  List<SosAlert> _sortAlerts(List<SosAlert> alerts) {
+    alerts.sort((a, b) {
+      final aTime = a.timestamp?.millisecondsSinceEpoch ?? 0;
+      final bTime = b.timestamp?.millisecondsSinceEpoch ?? 0;
+      return bTime.compareTo(aTime);
+    });
+    return alerts;
   }
 }

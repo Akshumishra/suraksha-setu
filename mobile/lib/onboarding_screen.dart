@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
 import 'login_screen.dart';
+import 'widgets/suraksha_setu_brand_logo.dart';
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
@@ -29,18 +31,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // App Logo
-            Image.asset(
-              'assets/google_logo.png',
-              height: 180,
-            ),
-            const SizedBox(height: 40),
+            const SurakshaSetuBrandLogo(width: 280),
+            const SizedBox(height: 28),
             const Text(
               'Welcome to Suraksha Setu',
               style: TextStyle(
                 fontSize: 26,
                 fontWeight: FontWeight.bold,
-                color: Colors.red,
+                color: Color(0xFFB71C1C),
               ),
             ),
             const SizedBox(height: 20),

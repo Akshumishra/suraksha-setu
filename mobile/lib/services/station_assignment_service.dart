@@ -2,6 +2,18 @@ import 'dart:math' as math;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+class AssignedPoliceStation {
+  const AssignedPoliceStation({
+    required this.stationId,
+    required this.stationName,
+    required this.contactNumber,
+  });
+
+  final String stationId;
+  final String? stationName;
+  final String? contactNumber;
+}
+
 class StationAssignmentService {
   StationAssignmentService._();
 
@@ -9,7 +21,7 @@ class StationAssignmentService {
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  Future<String?> findNearestStationId({
+  Future<AssignedPoliceStation?> findNearestStation({
     required double latitude,
     required double longitude,
   }) async {
@@ -18,8 +30,10 @@ class StationAssignmentService {
       return null;
     }
 
-    String? nearestStationId;
-    double nearestDistanceKm = double.infinity;
+    AssignedPoliceStation? nearestWithinJurisdiction;
+    double nearestWithinJurisdictionDistanceKm = double.infinity;
+    AssignedPoliceStation? nearestAnyStation;
+    double nearestAnyDistanceKm = double.infinity;
 
     for (final doc in snapshot.docs) {
       final data = doc.data();
@@ -36,43 +50,37 @@ class StationAssignmentService {
         toLat: stationLat,
         toLon: stationLon,
       );
+      final station = AssignedPoliceStation(
+        stationId: doc.id,
+        stationName: (data['stationName'] as String?)?.trim(),
+        contactNumber: (data['contactNumber'] as String?)?.trim(),
+      );
+
+      if (distanceKm < nearestAnyDistanceKm) {
+        nearestAnyDistanceKm = distanceKm;
+        nearestAnyStation = station;
+      }
 
       final isWithinJurisdiction = radiusKm == null || distanceKm <= radiusKm;
-      if (!isWithinJurisdiction) {
-        continue;
-      }
-
-      if (distanceKm < nearestDistanceKm) {
-        nearestDistanceKm = distanceKm;
-        nearestStationId = doc.id;
+      if (isWithinJurisdiction &&
+          distanceKm < nearestWithinJurisdictionDistanceKm) {
+        nearestWithinJurisdictionDistanceKm = distanceKm;
+        nearestWithinJurisdiction = station;
       }
     }
 
-    if (nearestStationId != null) {
-      return nearestStationId;
-    }
+    return nearestWithinJurisdiction ?? nearestAnyStation;
+  }
 
-    for (final doc in snapshot.docs) {
-      final data = doc.data();
-      final stationLat = (data['latitude'] as num?)?.toDouble();
-      final stationLon = (data['longitude'] as num?)?.toDouble();
-      if (stationLat == null || stationLon == null) {
-        continue;
-      }
-
-      final distanceKm = _haversineKm(
-        fromLat: latitude,
-        fromLon: longitude,
-        toLat: stationLat,
-        toLon: stationLon,
-      );
-      if (distanceKm < nearestDistanceKm) {
-        nearestDistanceKm = distanceKm;
-        nearestStationId = doc.id;
-      }
-    }
-
-    return nearestStationId;
+  Future<String?> findNearestStationId({
+    required double latitude,
+    required double longitude,
+  }) async {
+    return (await findNearestStation(
+      latitude: latitude,
+      longitude: longitude,
+    ))
+        ?.stationId;
   }
 
   double _haversineKm({

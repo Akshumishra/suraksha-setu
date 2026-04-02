@@ -11,8 +11,13 @@ import 'home_page.dart';
 import 'login_screen.dart';
 import 'onboarding_screen.dart';
 import 'permission_screen.dart';
+import 'screens/email_verification_screen.dart';
+import 'services/auth_account_service.dart';
 import 'services/sos_background_task_handler.dart';
+import 'services/emergency_contact_service.dart';
+import 'services/sos_alert_notification_service.dart';
 import 'services/sos_sync_service.dart';
+import 'services/user_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -36,6 +41,13 @@ Future<void> main() async {
     debugPrintStack(stackTrace: stackTrace);
   }
 
+  try {
+    await SosAlertNotificationService.instance.initialize();
+  } catch (e, stackTrace) {
+    debugPrint('Failed to initialize SOS alert notifications: $e');
+    debugPrintStack(stackTrace: stackTrace);
+  }
+
   // Start periodic offline evidence sync in background.
   unawaited(
     SosSyncService.instance.startAutoSync().catchError((error, stackTrace) {
@@ -43,6 +55,42 @@ Future<void> main() async {
       debugPrintStack(stackTrace: stackTrace);
     }),
   );
+
+  FirebaseAuth.instance.authStateChanges().listen((user) {
+    if (user == null) {
+      unawaited(
+        SosAlertNotificationService.instance.stop().catchError((error, stackTrace) {
+          debugPrint('Failed to stop SOS alert notifications: $error');
+          debugPrintStack(stackTrace: stackTrace);
+        }),
+      );
+      return;
+    }
+    unawaited(
+      EmergencyContactService.instance.refreshLocalCache().catchError((
+        error,
+        stackTrace,
+      ) {
+        debugPrint('Failed to warm emergency contact cache: $error');
+        debugPrintStack(stackTrace: stackTrace);
+      }),
+    );
+    unawaited(
+      UserService.refreshLocalProfileCache().catchError((error, stackTrace) {
+        debugPrint('Failed to warm user profile cache: $error');
+        debugPrintStack(stackTrace: stackTrace);
+      }),
+    );
+    unawaited(
+      SosAlertNotificationService.instance.startForCurrentUser().catchError((
+        error,
+        stackTrace,
+      ) {
+        debugPrint('Failed to start SOS alert notifications: $error');
+        debugPrintStack(stackTrace: stackTrace);
+      }),
+    );
+  });
 
   runApp(const SurakshaSetu());
 }
@@ -120,6 +168,9 @@ class _RootDeciderState extends State<RootDecider> {
         }
         if (user == null) {
           return const LoginScreen();
+        }
+        if (AuthAccountService.requiresEmailVerification(user)) {
+          return const EmailVerificationScreen();
         }
         if (_permissionsGranted!) {
           return const HomePage();

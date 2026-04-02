@@ -9,6 +9,7 @@
     <string name="sos_notification_locating">SOS active. Fetching your live location...</string>
     <string name="sos_notification_recording">SOS active. Recording emergency evidence...</string>
     <string name="sos_notification_recording_finished">SOS active. Recording completed.</string>
+    <string name="sos_notification_uploading_media">SOS active. Uploading emergency evidence...</string>
     <string name="sos_notification_camera_failed">SOS active. Camera unavailable; alerts continue.</string>
     <string name="sos_notification_pipeline_failed">SOS active. Some emergency steps failed.</string>
     <string name="sos_notification_auth_required">SOS failed: login required to sync with responders.</string>

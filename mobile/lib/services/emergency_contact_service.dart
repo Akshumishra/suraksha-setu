@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 
 import '../models/emergency_contact.dart';
+import 'sos_local_cache_service.dart';
 
 class AppUserContactProfile {
   const AppUserContactProfile({
@@ -48,46 +52,141 @@ class EmergencyContactService {
     return _collectionForUser(userId)
         .orderBy('createdAt', descending: true)
         .snapshots()
-        .map(
-          (snapshot) => snapshot.docs
-              .map((doc) => EmergencyContact.fromDoc(doc))
-              .toList(growable: false),
-    );
+        .map((snapshot) {
+      final contacts = snapshot.docs
+          .map((doc) => EmergencyContact.fromDoc(doc))
+          .toList(growable: false);
+      unawaited(
+        SosLocalCacheService.instance
+            .cacheEmergencyContacts(userId: userId, contacts: contacts)
+            .catchError((error, stackTrace) {
+          debugPrint('Failed to cache emergency contacts: $error');
+        }),
+      );
+      return contacts;
+    });
+  }
+
+  Future<void> refreshLocalCache() async {
+    final userId = _auth.currentUser?.uid;
+    if (userId == null || userId.trim().isEmpty) {
+      return;
+    }
+    try {
+      final snapshot = await _collectionForUser(userId)
+          .orderBy('createdAt', descending: true)
+          .get();
+      final contacts = snapshot.docs
+          .map((doc) => EmergencyContact.fromDoc(doc))
+          .toList(growable: false);
+      await SosLocalCacheService.instance.cacheEmergencyContacts(
+        userId: userId,
+        contacts: contacts,
+      );
+    } catch (error, stackTrace) {
+      debugPrint('Emergency contact cache refresh failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
   }
 
   Future<AppUserContactProfile> findAppUserByEmail(String email) async {
     final currentUserId = _requireUserId();
-    final normalizedEmail = email.trim().toLowerCase();
+    final rawEmail = email.trim();
+    final normalizedEmail = rawEmail.toLowerCase();
     if (normalizedEmail.isEmpty) {
       throw StateError('App user email is required.');
     }
 
-    final snapshot = await _usersCollection
-        .where('email', isEqualTo: normalizedEmail)
-        .where('role', isEqualTo: 'user')
-        .limit(1)
-        .get();
-    if (snapshot.docs.isEmpty) {
+    final doc = await _findLinkedAppUserDoc(
+      rawEmail: rawEmail,
+      normalizedEmail: normalizedEmail,
+    );
+    if (doc == null) {
       throw StateError('No app user found for the provided email.');
     }
 
-    final doc = snapshot.docs.first;
     if (doc.id == currentUserId) {
       throw StateError('You cannot add your own account as emergency contact.');
     }
 
     final data = doc.data();
-    final name = (data['name'] as String?)?.trim();
-    final phone = (data['phone'] as String?)?.trim();
-    final profileEmail = (data['email'] as String?)?.trim().toLowerCase();
+    final name = _normalizedString(data['name']);
+    final phone = _normalizedString(data['phone']);
+    final profileEmail = _normalizedEmailString(data['email']);
     return AppUserContactProfile(
       userId: doc.id,
-      name: name == null || name.isEmpty ? 'App User' : name,
+      name: name ?? 'App User',
       phone: phone ?? '',
-      email: profileEmail == null || profileEmail.isEmpty
-          ? normalizedEmail
-          : profileEmail,
+      email: profileEmail ?? normalizedEmail,
     );
+  }
+
+  Future<QueryDocumentSnapshot<Map<String, dynamic>>?> _findLinkedAppUserDoc({
+    required String rawEmail,
+    required String normalizedEmail,
+  }) async {
+    for (final candidate in <String>{rawEmail, normalizedEmail}) {
+      final directMatch = await _findUserDocByExactEmail(candidate);
+      if (directMatch != null) {
+        return directMatch;
+      }
+    }
+
+    // Fallback for older profiles saved with mixed-case emails or when
+    // the compound email+role query is unavailable.
+    final fallbackSnapshot =
+        await _usersCollection.where('role', isEqualTo: 'user').get();
+    for (final doc in fallbackSnapshot.docs) {
+      if (_normalizedEmailString(doc.data()['email']) == normalizedEmail) {
+        return doc;
+      }
+    }
+    return null;
+  }
+
+  Future<QueryDocumentSnapshot<Map<String, dynamic>>?> _findUserDocByExactEmail(
+    String email,
+  ) async {
+    final candidate = email.trim();
+    if (candidate.isEmpty) {
+      return null;
+    }
+
+    try {
+      final snapshot = await _usersCollection
+          .where('email', isEqualTo: candidate)
+          .where('role', isEqualTo: 'user')
+          .limit(1)
+          .get();
+      if (snapshot.docs.isEmpty) {
+        return null;
+      }
+      return snapshot.docs.first;
+    } on FirebaseException catch (error) {
+      if (error.code != 'failed-precondition') {
+        rethrow;
+      }
+      return null;
+    }
+  }
+
+  String? _normalizedString(dynamic value) {
+    if (value is! String) {
+      return null;
+    }
+    final normalized = value.trim();
+    if (normalized.isEmpty) {
+      return null;
+    }
+    return normalized;
+  }
+
+  String? _normalizedEmailString(dynamic value) {
+    final normalized = _normalizedString(value);
+    if (normalized == null) {
+      return null;
+    }
+    return normalized.toLowerCase();
   }
 
   Future<void> addContact({
@@ -108,6 +207,7 @@ class EmergencyContactService {
       createdAt: null,
     );
     await _collectionForUser(userId).add(contact.toCreatePayload());
+    unawaited(refreshLocalCache());
   }
 
   Future<void> updateContact({
@@ -131,11 +231,13 @@ class EmergencyContactService {
     await _collectionForUser(userId)
         .doc(contactId)
         .update(contact.toUpdatePayload());
+    unawaited(refreshLocalCache());
   }
 
   Future<void> deleteContact(String contactId) async {
     final userId = _requireUserId();
     await _collectionForUser(userId).doc(contactId).delete();
+    unawaited(refreshLocalCache());
   }
 
   String? _normalizedOrNull(String? value) {

@@ -207,7 +207,7 @@ class _PermissionScreenState extends State<PermissionScreen>
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Enable Suraksha Setu in Accessibility settings for volume key SOS.',
+            'Enable Suraksha Setu in Accessibility settings for volume SOS, then briefly hold Volume Up + Down together.',
           ),
         ),
       );
@@ -217,7 +217,7 @@ class _PermissionScreenState extends State<PermissionScreen>
   void _continue() {
     if (!_allGranted) {
       final message = !_accessibilityEnabled
-          ? 'Enable Accessibility service for volume SOS first.'
+          ? 'Enable Accessibility service for Volume Up + Down SOS first.'
           : 'Please grant all permissions first.';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(message)),
@@ -290,7 +290,7 @@ class _PermissionScreenState extends State<PermissionScreen>
                               Expanded(
                                 child: Text(
                                   _accessibilityEnabled
-                                      ? 'Volume SOS accessibility service is enabled.'
+                                      ? 'Volume SOS accessibility service is enabled. Briefly hold Volume Up + Down together to trigger SOS.'
                                       : 'Volume SOS requires Accessibility service.',
                                 ),
                               ),
@@ -324,7 +324,7 @@ class _PermissionScreenState extends State<PermissionScreen>
                               SizedBox(width: 8),
                               Expanded(
                                 child: Text(
-                                  'If your phone turns on flashlight with Volume Up + Down, disable that system gesture so SOS can use the combo.',
+                                  'Briefly hold Volume Up + Down together to trigger SOS. If your phone turns on flashlight with that combo, disable the system gesture first.',
                                 ),
                               ),
                             ],

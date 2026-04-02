@@ -27,6 +27,17 @@ class PoliceAuthService {
 
   static const String _adminRole = 'admin';
 
+  static const Set<String> _bootstrapAdminEmails = <String>{
+    'surakshasetu47@gmail.com',
+  };
+
+  bool _isBootstrapAdminEmail(String? email) {
+    if (email == null) {
+      return false;
+    }
+    return _bootstrapAdminEmails.contains(email.trim().toLowerCase());
+  }
+
   String? _claimString(
     IdTokenResult tokenResult,
     String key,
@@ -38,10 +49,19 @@ class PoliceAuthService {
     return value.toString().trim();
   }
 
-  Future<Map<String, String?>> _loadRoleAndStationFromProfile(String uid) async {
-    final profile = await _firestore.collection('users').doc(uid).get();
-    final role = (profile.data()?['role'] as String?)?.trim().toLowerCase();
-    final stationId = (profile.data()?['stationId'] as String?)?.trim();
+  Future<Map<String, String?>> _loadRoleAndStationFromProfile(
+      String uid) async {
+    String? role;
+    String? stationId;
+    try {
+      final profile = await _firestore.collection('users').doc(uid).get();
+      role = (profile.data()?['role'] as String?)?.trim().toLowerCase();
+      stationId = (profile.data()?['stationId'] as String?)?.trim();
+    } on FirebaseException {
+      // If profile lookup is blocked/unavailable, rely on custom claims only.
+      role = null;
+      stationId = null;
+    }
     return <String, String?>{
       'role': role,
       'stationId': stationId,
@@ -138,8 +158,30 @@ class PoliceAuthService {
       return true;
     }
 
+    final tokenEmail = _claimString(tokenResult, 'email');
+    if (_isBootstrapAdminEmail(tokenEmail) ||
+        _isBootstrapAdminEmail(user.email)) {
+      return true;
+    }
+
     final profile = await _loadRoleAndStationFromProfile(user.uid);
-    return profile['role'] == _adminRole;
+    return profile['role'] == _adminRole || _isBootstrapAdminEmail(user.email);
+  }
+
+  Future<void> refreshCurrentSession() async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      return;
+    }
+    await user.getIdToken(true);
+  }
+
+  Future<void> sendPasswordResetEmail({required String email}) async {
+    final trimmedEmail = email.trim();
+    if (trimmedEmail.isEmpty) {
+      throw StateError('Enter your email so we can send a reset link.');
+    }
+    await _auth.sendPasswordResetEmail(email: trimmedEmail);
   }
 
   Future<void> signOut() => _auth.signOut();

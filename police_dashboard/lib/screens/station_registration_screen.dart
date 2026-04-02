@@ -19,6 +19,7 @@ class _StationRegistrationScreenState extends State<StationRegistrationScreen> {
   final _contactCtrl = TextEditingController();
   final _radiusCtrl = TextEditingController(text: '10');
   bool _saving = false;
+  PoliceStation? _editingStation;
 
   @override
   void dispose() {
@@ -42,10 +43,33 @@ class _StationRegistrationScreenState extends State<StationRegistrationScreen> {
               key: _formKey,
               child: Column(
                 children: [
+                  if (_editingStation != null) ...[
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primaryContainer,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Editing ${_editingStation!.stationName}. Update the coordinates to match the real station location.',
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: _saving ? null : _clearEditingState,
+                            child: const Text('Cancel'),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
                   TextFormField(
                     controller: _nameCtrl,
-                    decoration:
-                        const InputDecoration(labelText: 'Station Name'),
+                    decoration: const InputDecoration(labelText: 'Station Name'),
                     validator: _requiredValidator,
                   ),
                   const SizedBox(height: 10),
@@ -71,8 +95,7 @@ class _StationRegistrationScreenState extends State<StationRegistrationScreen> {
                   const SizedBox(height: 10),
                   TextFormField(
                     controller: _contactCtrl,
-                    decoration:
-                        const InputDecoration(labelText: 'Contact Number'),
+                    decoration: const InputDecoration(labelText: 'Contact Number'),
                     validator: _requiredValidator,
                   ),
                   const SizedBox(height: 10),
@@ -89,8 +112,18 @@ class _StationRegistrationScreenState extends State<StationRegistrationScreen> {
                   const SizedBox(height: 16),
                   FilledButton.icon(
                     onPressed: _saving ? null : _saveStation,
-                    icon: const Icon(Icons.add_location_alt_outlined),
-                    label: Text(_saving ? 'Saving...' : 'Register Station'),
+                    icon: Icon(
+                      _editingStation == null
+                          ? Icons.add_location_alt_outlined
+                          : Icons.save_outlined,
+                    ),
+                    label: Text(
+                      _saving
+                          ? 'Saving...'
+                          : _editingStation == null
+                              ? 'Register Station'
+                              : 'Update Station',
+                    ),
                   ),
                 ],
               ),
@@ -115,15 +148,25 @@ class _StationRegistrationScreenState extends State<StationRegistrationScreen> {
                 itemCount: stations.length,
                 itemBuilder: (context, index) {
                   final station = stations[index];
+                  final policeId = station.policeId;
+                  final policeIdLine = policeId != null && policeId.isNotEmpty
+                      ? 'Police ID: $policeId\n'
+                      : '';
                   return ListTile(
                     title: Text(station.stationName),
                     subtitle: Text(
+                      '$policeIdLine'
                       'Lat: ${station.latitude.toStringAsFixed(5)}, '
                       'Lon: ${station.longitude.toStringAsFixed(5)}\n'
-                      'Radius: ${station.jurisdictionRadius} km • '
+                      'Radius: ${station.jurisdictionRadius} km | '
                       'Contact: ${station.contactNumber}',
                     ),
                     isThreeLine: true,
+                    trailing: IconButton(
+                      tooltip: 'Edit station',
+                      icon: const Icon(Icons.edit_outlined),
+                      onPressed: _saving ? null : () => _startEditing(station),
+                    ),
                   );
                 },
               );
@@ -151,6 +194,28 @@ class _StationRegistrationScreenState extends State<StationRegistrationScreen> {
     return null;
   }
 
+  void _startEditing(PoliceStation station) {
+    setState(() {
+      _editingStation = station;
+      _nameCtrl.text = station.stationName;
+      _latitudeCtrl.text = station.latitude.toString();
+      _longitudeCtrl.text = station.longitude.toString();
+      _contactCtrl.text = station.contactNumber;
+      _radiusCtrl.text = station.jurisdictionRadius.toString();
+    });
+  }
+
+  void _clearEditingState() {
+    setState(() {
+      _editingStation = null;
+      _nameCtrl.clear();
+      _latitudeCtrl.clear();
+      _longitudeCtrl.clear();
+      _contactCtrl.clear();
+      _radiusCtrl.text = '10';
+    });
+  }
+
   Future<void> _saveStation() async {
     if (!(_formKey.currentState?.validate() ?? false)) {
       return;
@@ -158,30 +223,51 @@ class _StationRegistrationScreenState extends State<StationRegistrationScreen> {
 
     try {
       setState(() => _saving = true);
-      await PoliceStationService.instance.createStation(
-        stationName: _nameCtrl.text,
-        latitude: double.parse(_latitudeCtrl.text.trim()),
-        longitude: double.parse(_longitudeCtrl.text.trim()),
-        contactNumber: _contactCtrl.text,
-        jurisdictionRadius: double.parse(_radiusCtrl.text.trim()),
-      );
-      _nameCtrl.clear();
-      _latitudeCtrl.clear();
-      _longitudeCtrl.clear();
-      _contactCtrl.clear();
-      _radiusCtrl.text = '10';
+      final stationName = _nameCtrl.text.trim();
+      final latitude = double.parse(_latitudeCtrl.text.trim());
+      final longitude = double.parse(_longitudeCtrl.text.trim());
+      final contactNumber = _contactCtrl.text.trim();
+      final jurisdictionRadius = double.parse(_radiusCtrl.text.trim());
+      final editingStation = _editingStation;
+
+      if (editingStation == null) {
+        await PoliceStationService.instance.createStation(
+          stationName: stationName,
+          latitude: latitude,
+          longitude: longitude,
+          contactNumber: contactNumber,
+          jurisdictionRadius: jurisdictionRadius,
+        );
+      } else {
+        await PoliceStationService.instance.updateStation(
+          stationId: editingStation.id,
+          stationName: stationName,
+          latitude: latitude,
+          longitude: longitude,
+          contactNumber: contactNumber,
+          jurisdictionRadius: jurisdictionRadius,
+        );
+      }
+
+      _clearEditingState();
       if (!mounted) {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Police station registered.')),
+        SnackBar(
+          content: Text(
+            editingStation == null
+                ? 'Police station registered.'
+                : 'Police station updated.',
+          ),
+        ),
       );
     } catch (e) {
       if (!mounted) {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to register station: $e')),
+        SnackBar(content: Text('Failed to save station: $e')),
       );
     } finally {
       if (mounted) {

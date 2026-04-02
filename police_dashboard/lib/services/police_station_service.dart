@@ -20,6 +20,14 @@ class PoliceStationService {
         );
   }
 
+  Stream<PoliceStation?> watchStationById(String stationId) {
+    return _firestore
+        .collection('police_stations')
+        .doc(stationId)
+        .snapshots()
+        .map((doc) => doc.exists ? PoliceStation.fromDoc(doc) : null);
+  }
+
   Future<void> createStation({
     required String stationName,
     required double latitude,
@@ -37,5 +45,25 @@ class PoliceStationService {
     ).toMap();
 
     await _firestore.collection('police_stations').add(payload);
+  }
+
+  Future<void> updateStation({
+    required String stationId,
+    required String stationName,
+    required double latitude,
+    required double longitude,
+    required String contactNumber,
+    required double jurisdictionRadius,
+  }) async {
+    final payload = PoliceStation(
+      id: stationId,
+      stationName: stationName,
+      latitude: latitude,
+      longitude: longitude,
+      contactNumber: contactNumber,
+      jurisdictionRadius: jurisdictionRadius,
+    ).toMap();
+
+    await _firestore.collection('police_stations').doc(stationId).update(payload);
   }
 }

@@ -1,21 +1,22 @@
 import 'dart:async';
-import 'dart:io' show Platform;
 import 'dart:ui';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 
+import 'emergency_contact_service.dart';
+import 'sos_alert_notification_service.dart';
 import 'sos_sync_service.dart';
+import 'user_service.dart';
 
 const int _notificationId = 54021;
 
 @pragma('vm:entry-point')
 Future<void> sosBackgroundServiceOnStart(ServiceInstance service) async {
   WidgetsFlutterBinding.ensureInitialized();
-  if (!Platform.isAndroid) {
-    DartPluginRegistrant.ensureInitialized();
-  }
+  DartPluginRegistrant.ensureInitialized();
 
   try {
     if (Firebase.apps.isEmpty) {
@@ -36,7 +37,10 @@ Future<void> sosBackgroundServiceOnStart(ServiceInstance service) async {
 
   Future<void> syncOnce() async {
     try {
+      await EmergencyContactService.instance.refreshLocalCache();
+      await UserService.refreshLocalProfileCache();
       await SosSyncService.instance.syncPendingFiles();
+      await SosAlertNotificationService.instance.pollAndNotifyOnce();
     } catch (e, stackTrace) {
       debugPrint('SOS background sync failed: $e');
       debugPrintStack(stackTrace: stackTrace);
@@ -49,10 +53,25 @@ Future<void> sosBackgroundServiceOnStart(ServiceInstance service) async {
     const Duration(minutes: 5),
     (_) => syncOnce(),
   );
+  final connectivitySubscription = Connectivity().onConnectivityChanged.listen((
+    resultOrResults,
+  ) {
+    final hasConnection = switch (resultOrResults) {
+      List<ConnectivityResult> results =>
+        results.any((result) => result != ConnectivityResult.none),
+      ConnectivityResult result => result != ConnectivityResult.none,
+      _ => false,
+    };
+    if (!hasConnection) {
+      return;
+    }
+    unawaited(syncOnce());
+  });
 
   service.on('sync_now').listen((_) => syncOnce());
   service.on('stop_service').listen((_) {
     timer.cancel();
+    connectivitySubscription.cancel();
     service.stopSelf();
   });
 }

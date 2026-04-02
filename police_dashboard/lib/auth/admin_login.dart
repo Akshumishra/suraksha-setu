@@ -1,8 +1,9 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
-import 'admin_credentials.dart';
+import '../app_routes.dart';
 import '../services/police_auth_service.dart';
+import '../utils/firebase_error_mapper.dart';
 
 class AdminLogin extends StatefulWidget {
   const AdminLogin({super.key});
@@ -12,9 +13,9 @@ class AdminLogin extends StatefulWidget {
 }
 
 class _AdminLoginState extends State<AdminLogin> {
-  final _usernameCtrl = TextEditingController(text: AdminCredentials.username);
-  final _emailCtrl = TextEditingController(text: AdminCredentials.email);
-  final _passwordCtrl = TextEditingController(text: AdminCredentials.password);
+  final _usernameCtrl = TextEditingController();
+  final _emailCtrl = TextEditingController();
+  final _passwordCtrl = TextEditingController();
   bool _loading = false;
   String _error = '';
 
@@ -27,18 +28,22 @@ class _AdminLoginState extends State<AdminLogin> {
   }
 
   Future<void> _login() async {
+    final username = _usernameCtrl.text.trim();
+    final email = _emailCtrl.text.trim();
+    final password = _passwordCtrl.text.trim();
+    if (username.isEmpty || email.isEmpty || password.isEmpty) {
+      setState(() => _error = 'Enter username, email and password.');
+      return;
+    }
+
     setState(() {
       _loading = true;
       _error = '';
     });
     try {
-      if (_usernameCtrl.text.trim() != AdminCredentials.username) {
-        throw StateError('Invalid admin username.');
-      }
-
       final credential = await FirebaseAuth.instance.signInWithEmailAndPassword(
-        email: _emailCtrl.text.trim(),
-        password: _passwordCtrl.text.trim(),
+        email: email,
+        password: password,
       );
       if (credential.user == null) {
         throw StateError('Invalid authenticated user.');
@@ -53,12 +58,20 @@ class _AdminLoginState extends State<AdminLogin> {
       if (!mounted) {
         return;
       }
-      Navigator.pushReplacementNamed(context, '/admin');
+      Navigator.of(context).pushNamedAndRemoveUntil(
+        AppRoutes.home,
+        (route) => false,
+      );
     } catch (e) {
       if (!mounted) {
         return;
       }
-      setState(() => _error = e.toString());
+      setState(() {
+        _error = FirebaseErrorMapper.toMessage(
+          e,
+          fallback: 'Admin login failed. Please try again.',
+        );
+      });
     } finally {
       if (mounted) {
         setState(() => _loading = false);

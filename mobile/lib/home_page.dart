@@ -5,9 +5,11 @@ import 'config/sos_config.dart';
 import 'login_screen.dart';
 import 'screens/sos_alerts_screen.dart';
 import 'screens/emergency_contacts_screen.dart';
+import 'screens/profile_screen.dart';
 import 'screens/sos_history_screen.dart';
 import 'services/sos_repository.dart';
 import 'services/sos_service.dart';
+import 'widgets/suraksha_setu_brand_logo.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -26,6 +28,7 @@ class _HomePageState extends State<HomePage> {
     SosAlertsScreen(),
     EmergencyContactsScreen(),
     SosHistoryScreen(),
+    ProfileScreen(),
   ];
 
   static const _titles = <String>[
@@ -33,6 +36,7 @@ class _HomePageState extends State<HomePage> {
     'Alerts',
     'Emergency Contacts',
     'SOS History',
+    'Profile',
   ];
 
   Future<void> _logout() async {
@@ -50,7 +54,13 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_titles[_tabIndex]),
+        title: Row(
+          children: [
+            const SurakshaSetuBrandLogo(width: 44, compact: true),
+            const SizedBox(width: 10),
+            Expanded(child: Text(_titles[_tabIndex])),
+          ],
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.logout),
@@ -96,6 +106,10 @@ class _HomePageState extends State<HomePage> {
           const NavigationDestination(
             icon: Icon(Icons.history),
             label: 'History',
+          ),
+          const NavigationDestination(
+            icon: Icon(Icons.person_outline),
+            label: 'Profile',
           ),
         ],
       ),

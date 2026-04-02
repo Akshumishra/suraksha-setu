@@ -4,7 +4,6 @@ import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
 import android.os.Build
 import android.os.PowerManager
-import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import android.view.KeyEvent
@@ -12,19 +11,20 @@ import android.view.accessibility.AccessibilityManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
-import kotlin.math.abs
 
 class MainActivity : FlutterActivity() {
     private val channel = "com.surakshasetu.sos"
     private val tag = "MainActivity"
-    private val comboWindowMs = 1_500L
-    private val comboCooldownMs = 15_000L
-
-    private var lastVolumeUpDownMs = 0L
-    private var lastVolumeDownDownMs = 0L
-    private var lastComboTriggerMs = 0L
-    private var isVolumeUpPressed = false
-    private var isVolumeDownPressed = false
+    private val volumeSosGestureDetector =
+        VolumeSosGestureDetector(
+            onTrigger = {
+                triggerSosFromNative(
+                    source = "volume_buttons_foreground",
+                    whileLocked = false,
+                )
+            },
+            onLog = { message -> Log.i(tag, message) },
+        )
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -114,53 +114,20 @@ class MainActivity : FlutterActivity() {
             return super.onKeyDown(keyCode, event)
         }
 
-        if (event.repeatCount > 0) {
-            return super.onKeyDown(keyCode, event)
-        }
-
-        val now = SystemClock.elapsedRealtime()
-        if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
-            isVolumeUpPressed = true
-            lastVolumeUpDownMs = now
-        } else {
-            isVolumeDownPressed = true
-            lastVolumeDownDownMs = now
-        }
-
-        val bothPressed = isVolumeUpPressed && isVolumeDownPressed
-        val withinWindow =
-            lastVolumeUpDownMs > 0L &&
-                lastVolumeDownDownMs > 0L &&
-                abs(lastVolumeUpDownMs - lastVolumeDownDownMs) <= comboWindowMs
-        val cooldownPassed = now - lastComboTriggerMs >= comboCooldownMs
-
-        if ((bothPressed || withinWindow) && cooldownPassed) {
-            lastComboTriggerMs = now
-            resetVolumeComboState()
-            triggerSosFromNative(
-                source = "volume_buttons_foreground",
-                whileLocked = false,
-            )
-            return true
-        }
-
+        volumeSosGestureDetector.onKeyDown(keyCode, event.repeatCount)
         return super.onKeyDown(keyCode, event)
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
-            isVolumeUpPressed = false
-        } else if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
-            isVolumeDownPressed = false
+        if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+            volumeSosGestureDetector.onKeyUp(keyCode)
         }
         return super.onKeyUp(keyCode, event)
     }
 
-    private fun resetVolumeComboState() {
-        isVolumeUpPressed = false
-        isVolumeDownPressed = false
-        lastVolumeUpDownMs = 0L
-        lastVolumeDownDownMs = 0L
+    override fun onDestroy() {
+        volumeSosGestureDetector.clear()
+        super.onDestroy()
     }
 
     private fun triggerSosFromNative(

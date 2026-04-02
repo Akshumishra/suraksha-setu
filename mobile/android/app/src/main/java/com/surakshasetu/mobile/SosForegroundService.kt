@@ -14,6 +14,7 @@ import android.content.pm.ServiceInfo
 import android.location.Location
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import android.os.Looper
@@ -27,15 +28,21 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.Task
 import com.google.android.gms.tasks.CancellationTokenSource
 import com.google.android.gms.tasks.Tasks
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.GeoPoint
+import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.QuerySnapshot
 import com.google.firebase.firestore.SetOptions
+import com.google.firebase.firestore.Source
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -43,9 +50,18 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.json.JSONObject
+import java.io.DataOutputStream
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import java.net.URL
+import java.net.URLConnection
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
@@ -75,11 +91,24 @@ class SosForegroundService : Service() {
         private const val LOCATION_FASTEST_INTERVAL_MS = 5_000L
         private const val DEFAULT_EMERGENCY_NUMBER = "112"
         private const val AUTO_STOP_DELAY_MS = 20_000L
+        private const val MEDIA_UPLOAD_TIMEOUT_MS = 60_000
+        private const val MEDIA_UPLOAD_BUFFER_SIZE = 8 * 1024
+        private const val FIREBASE_CACHE_TIMEOUT_SECONDS = 3L
+        private const val LOCAL_EMERGENCY_CONTACTS_CACHE_FILE = "emergency_contacts_cache.json"
+        private const val LOCAL_USER_PROFILE_CACHE_FILE = "user_profile_cache.json"
+        private const val LOCAL_SOS_METADATA_DIR = "sos_metadata"
     }
 
     private data class StationMatch(
         val stationId: String,
+        val stationName: String?,
         val contactNumber: String?,
+    )
+
+    private data class CachedUserProfile(
+        val userId: String,
+        val name: String?,
+        val phone: String?,
     )
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -94,6 +123,27 @@ class SosForegroundService : Service() {
 
     @Volatile
     private var activeUserId: String? = null
+
+    @Volatile
+    private var activeTriggerSource: String? = null
+
+    @Volatile
+    private var activeCreatedAtEpochMs: Long? = null
+
+    @Volatile
+    private var activeRecordingPath: String? = null
+
+    @Volatile
+    private var activeLatitude: Double? = null
+
+    @Volatile
+    private var activeLongitude: Double? = null
+
+    @Volatile
+    private var activeStationMatch: StationMatch? = null
+
+    @Volatile
+    private var deferredEmergencyDialNumber: String? = null
 
     private var stopSelfJob: Job? = null
     private var liveLocationCallback: LocationCallback? = null
@@ -146,7 +196,15 @@ class SosForegroundService : Service() {
 
         activeSosId = sosId
         activeUserId = FirebaseAuth.getInstance().currentUser?.uid
+        activeTriggerSource = triggerSource
+        activeCreatedAtEpochMs = System.currentTimeMillis()
+        activeRecordingPath = null
+        activeLatitude = null
+        activeLongitude = null
+        activeStationMatch = null
+        deferredEmergencyDialNumber = null
         sosFlowRunning = true
+        persistLocalSosMetadata()
 
         launchEmergencyCameraActivity(
             sosId = sosId,
@@ -165,6 +223,10 @@ class SosForegroundService : Service() {
     private fun handleCameraRecordingStarted(intent: Intent) {
         intent.getStringExtra(EXTRA_SOS_ID)?.takeIf { it.isNotBlank() }?.let { activeSosId = it }
         val path = intent.getStringExtra(EXTRA_RECORDING_PATH).orEmpty()
+        if (path.isNotBlank()) {
+            activeRecordingPath = path
+            persistLocalSosMetadata()
+        }
         updateNotification(getString(R.string.sos_notification_recording))
         updateRecordingMetadata(
             recordingStatus = "recording",
@@ -174,15 +236,34 @@ class SosForegroundService : Service() {
     }
 
     private fun handleCameraRecordingFinished(intent: Intent) {
-        intent.getStringExtra(EXTRA_SOS_ID)?.takeIf { it.isNotBlank() }?.let { activeSosId = it }
+        val sosId = intent.getStringExtra(EXTRA_SOS_ID)?.takeIf { it.isNotBlank() }?.also {
+            activeSosId = it
+        } ?: activeSosId
         val path = intent.getStringExtra(EXTRA_RECORDING_PATH).orEmpty()
+        if (path.isNotBlank()) {
+            activeRecordingPath = path
+        }
+        persistLocalSosMetadata()
         updateNotification(getString(R.string.sos_notification_recording_finished))
         updateRecordingMetadata(
             recordingStatus = "finished",
             localPath = path,
             failureReason = null,
         )
-        scheduleSelfStop()
+        if (sosId.isNullOrBlank() || path.isBlank()) {
+            consumeDeferredEmergencyDialNumber()?.let { placeEmergencyCall(it) }
+            scheduleSelfStop()
+            return
+        }
+
+        serviceScope.launch {
+            consumeDeferredEmergencyDialNumber()?.let { placeEmergencyCall(it) }
+            uploadRecordedMediaIfPossible(
+                sosId = sosId,
+                localPath = path,
+            )
+            scheduleSelfStop()
+        }
     }
 
     private fun handleCameraRecordingFailed(intent: Intent) {
@@ -190,11 +271,13 @@ class SosForegroundService : Service() {
         val reason = intent.getStringExtra(EXTRA_FAILURE_REASON).orEmpty()
         Log.e(TAG, "Emergency camera failed: $reason")
         updateNotification(getString(R.string.sos_notification_camera_failed))
+        persistLocalSosMetadata()
         updateRecordingMetadata(
             recordingStatus = "failed",
             localPath = null,
             failureReason = reason,
         )
+        consumeDeferredEmergencyDialNumber()?.let { placeEmergencyCall(it) }
         scheduleSelfStop()
     }
 
@@ -216,26 +299,46 @@ class SosForegroundService : Service() {
                 return
             }
 
-            updateNotification(getString(R.string.sos_notification_locating))
-            val location = getCurrentLocationSafely()
-            val stationMatch = location?.let { findNearestStation(it.latitude, it.longitude) }
-
-            writeSosDocument(
+            var awaitRealtimeFirestore = hasInternetConnection()
+            val seededSynchronously = seedInitialSosDocument(
                 sosId = sosId,
                 userId = userId,
                 triggerSource = triggerSource,
+                awaitSync = awaitRealtimeFirestore,
+            )
+            if (!seededSynchronously) {
+                awaitRealtimeFirestore = false
+            }
+
+            updateNotification(getString(R.string.sos_notification_locating))
+            val location = getCurrentLocationSafely()
+            val stationMatch = location?.let { findNearestStation(it.latitude, it.longitude) }
+            activeLatitude = location?.latitude
+            activeLongitude = location?.longitude
+            activeStationMatch = stationMatch
+            persistLocalSosMetadata()
+
+            awaitRealtimeFirestore = awaitRealtimeFirestore && hasInternetConnection()
+            val locationWrittenSynchronously = writeSosDocument(
+                sosId = sosId,
                 location = location,
                 assignedStationId = stationMatch?.stationId,
+                awaitSync = awaitRealtimeFirestore,
             )
+            if (!locationWrittenSynchronously) {
+                awaitRealtimeFirestore = false
+            }
+
             notifyLinkedEmergencyContacts(
                 sosId = sosId,
                 sourceUserId = userId,
                 location = location,
-                assignedStationId = stationMatch?.stationId,
+                assignedStationMatch = stationMatch,
+                awaitDispatch = awaitRealtimeFirestore,
             )
 
-            if (!hasInternetConnection()) {
-                triggerSmsFallback(
+            if (!awaitRealtimeFirestore || !hasInternetConnection()) {
+                triggerOfflineEmergencyFallback(
                     userId = userId,
                     location = location,
                     stationContactNumber = stationMatch?.contactNumber,
@@ -359,19 +462,182 @@ class SosForegroundService : Service() {
         }
         firestore.collection("sos")
             .document(sosId)
-            .set(payload, SetOptions.merge())
-            .addOnFailureListener { Log.e(TAG, "Failed to update recording metadata", it) }
+            .update(payload)
+            .addOnFailureListener { error ->
+                if (error is FirebaseFirestoreException &&
+                    error.code == FirebaseFirestoreException.Code.NOT_FOUND
+                ) {
+                    Log.w(TAG, "Skipping recording metadata update; SOS document not found yet")
+                } else {
+                    Log.e(TAG, "Failed to update recording metadata", error)
+                }
+            }
+    }
+
+    private suspend fun uploadRecordedMediaIfPossible(
+        sosId: String,
+        localPath: String,
+    ) {
+        if (!::firestore.isInitialized) {
+            return
+        }
+        val mediaFile = File(localPath)
+        if (!mediaFile.exists()) {
+            Log.w(TAG, "Recorded media file not found for upload: $localPath")
+            return
+        }
+        if (!hasInternetConnection()) {
+            Log.i(TAG, "Skipping immediate media upload because internet is unavailable")
+            return
+        }
+
+        updateNotification(getString(R.string.sos_notification_uploading_media))
+        try {
+            val mediaUrl = uploadMediaToCloudinary(mediaFile)
+            Tasks.await(
+                firestore.collection("sos").document(sosId).update("mediaUrl", mediaUrl),
+                FIREBASE_TIMEOUT_SECONDS,
+                TimeUnit.SECONDS,
+            )
+            resolveSourceUserIdForSos(sosId)?.let { sourceUserId ->
+                shareMediaLinkWithLinkedEmergencyContacts(
+                    sosId = sosId,
+                    sourceUserId = sourceUserId,
+                    mediaUrl = mediaUrl,
+                )
+            }
+            val deleted = mediaFile.delete()
+            if (!deleted) {
+                Log.w(TAG, "Uploaded media but could not delete local file: $localPath")
+            } else {
+                clearLocalSosMetadata(sosId)
+            }
+            Log.i(TAG, "SOS media uploaded successfully for sosId=$sosId")
+        } catch (e: Exception) {
+            Log.e(TAG, "Immediate media upload failed; background sync will retry", e)
+        } finally {
+            updateNotification(getString(R.string.sos_notification_recording_finished))
+        }
+    }
+
+    private fun uploadMediaToCloudinary(file: File): String {
+        val boundary = "----SurakshaSetu${System.currentTimeMillis()}"
+        val lineEnd = "\r\n"
+        val baseName = file.nameWithoutExtension.replace(Regex("[^A-Za-z0-9_-]"), "_")
+        val publicId = "sos_${System.currentTimeMillis()}_$baseName"
+        val uploadUrl =
+            URL("https://api.cloudinary.com/v1_1/${BuildConfig.CLOUDINARY_CLOUD_NAME}/auto/upload")
+        val connection = (uploadUrl.openConnection() as HttpURLConnection).apply {
+            connectTimeout = MEDIA_UPLOAD_TIMEOUT_MS
+            readTimeout = MEDIA_UPLOAD_TIMEOUT_MS
+            doInput = true
+            doOutput = true
+            useCaches = false
+            requestMethod = "POST"
+            setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+        }
+
+        try {
+            DataOutputStream(connection.outputStream).use { output ->
+                fun writeFormField(name: String, value: String) {
+                    output.writeBytes("--$boundary$lineEnd")
+                    output.writeBytes("Content-Disposition: form-data; name=\"$name\"$lineEnd")
+                    output.writeBytes(lineEnd)
+                    output.writeBytes(value)
+                    output.writeBytes(lineEnd)
+                }
+
+                writeFormField("upload_preset", BuildConfig.CLOUDINARY_UPLOAD_PRESET)
+                writeFormField("folder", BuildConfig.CLOUDINARY_FOLDER)
+                writeFormField("public_id", publicId)
+
+                val mimeType =
+                    URLConnection.guessContentTypeFromName(file.name) ?: "application/octet-stream"
+                output.writeBytes("--$boundary$lineEnd")
+                output.writeBytes(
+                    "Content-Disposition: form-data; name=\"file\"; filename=\"${file.name}\"$lineEnd",
+                )
+                output.writeBytes("Content-Type: $mimeType$lineEnd")
+                output.writeBytes(lineEnd)
+                file.inputStream().use { input ->
+                    input.copyTo(output, MEDIA_UPLOAD_BUFFER_SIZE)
+                }
+                output.writeBytes(lineEnd)
+                output.writeBytes("--$boundary--$lineEnd")
+                output.flush()
+            }
+
+            val statusCode = connection.responseCode
+            val responseBody = (
+                if (statusCode in 200..299) connection.inputStream else connection.errorStream
+                )
+                ?.bufferedReader()
+                ?.use { it.readText() }
+                .orEmpty()
+
+            if (statusCode !in 200..299) {
+                throw IllegalStateException(
+                    "Cloudinary upload failed ($statusCode): ${extractCloudinaryError(responseBody)}",
+                )
+            }
+
+            val secureUrl = JSONObject(responseBody).optString("secure_url").trim()
+            if (secureUrl.isBlank()) {
+                throw IllegalStateException("Cloudinary upload succeeded but secure_url was missing.")
+            }
+            return secureUrl
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun extractCloudinaryError(responseBody: String): String {
+        if (responseBody.isBlank()) {
+            return "empty response"
+        }
+        return try {
+            val decoded = JSONObject(responseBody)
+            decoded.optJSONObject("error")?.optString("message")?.takeIf { it.isNotBlank() }
+                ?: responseBody
+        } catch (_: Exception) {
+            responseBody
+        }
+    }
+
+    private fun seedInitialSosDocument(
+        sosId: String,
+        userId: String,
+        triggerSource: String,
+        awaitSync: Boolean,
+    ): Boolean {
+        val payload = mutableMapOf<String, Any?>(
+            "userId" to userId,
+            "timestamp" to FieldValue.serverTimestamp(),
+            "status" to "active",
+            "triggerSource" to triggerSource,
+            "recordingStatus" to "camera_activity_started",
+            "recordingFailureReason" to null,
+            "localMediaPath" to "",
+            "assignedStationId" to "",
+            "cancelledAt" to null,
+        )
+
+        return enqueueSet(
+            task = firestore.collection("sos").document(sosId).set(payload, SetOptions.merge()),
+            operationName = "seed initial SOS document",
+            awaitSync = awaitSync,
+        )
     }
 
     @SuppressLint("MissingPermission")
     private fun startLiveLocationUpdates(sosId: String) {
-        if (!hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)) {
-            Log.w(TAG, "ACCESS_FINE_LOCATION not granted; skipping live location updates")
+        if (!hasAnyLocationPermission()) {
+            Log.w(TAG, "No location permission granted; skipping live location updates")
             return
         }
 
         val request = LocationRequest.Builder(
-            Priority.PRIORITY_HIGH_ACCURACY,
+            resolveLocationPriority(),
             LOCATION_UPDATE_INTERVAL_MS,
         ).setMinUpdateIntervalMillis(LOCATION_FASTEST_INTERVAL_MS)
             .build()
@@ -379,18 +645,27 @@ class SosForegroundService : Service() {
         val callback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
                 val latestLocation = result.lastLocation ?: return
-                val payload = mapOf<String, Any>(
-                    "location" to GeoPoint(latestLocation.latitude, latestLocation.longitude),
-                    "lat" to latestLocation.latitude,
-                    "lon" to latestLocation.longitude,
-                    "lastLocationUpdateAt" to FieldValue.serverTimestamp(),
-                )
-                firestore.collection("sos")
-                    .document(sosId)
-                    .set(payload, SetOptions.merge())
-                    .addOnFailureListener { error ->
-                        Log.e(TAG, "Failed to write live location update", error)
-                    }
+                serviceScope.launch {
+                    val stationMatch =
+                        findNearestStation(latestLocation.latitude, latestLocation.longitude)
+                    activeLatitude = latestLocation.latitude
+                    activeLongitude = latestLocation.longitude
+                    activeStationMatch = stationMatch
+                    persistLocalSosMetadata()
+                    val payload = mapOf<String, Any>(
+                        "location" to GeoPoint(latestLocation.latitude, latestLocation.longitude),
+                        "lat" to latestLocation.latitude,
+                        "lon" to latestLocation.longitude,
+                        "assignedStationId" to (stationMatch?.stationId ?: ""),
+                        "lastLocationUpdateAt" to FieldValue.serverTimestamp(),
+                    )
+                    firestore.collection("sos")
+                        .document(sosId)
+                        .set(payload, SetOptions.merge())
+                        .addOnFailureListener { error ->
+                            Log.e(TAG, "Failed to write live location update", error)
+                        }
+                }
             }
         }
 
@@ -415,34 +690,27 @@ class SosForegroundService : Service() {
 
     private fun writeSosDocument(
         sosId: String,
-        userId: String,
-        triggerSource: String,
         location: Location?,
         assignedStationId: String?,
-    ) {
-        val payload = mutableMapOf<String, Any?>(
-            "userId" to userId,
-            "timestamp" to FieldValue.serverTimestamp(),
-            "status" to "active",
-            "mediaUrl" to "",
-            "triggerSource" to triggerSource,
-            "recordingStatus" to "camera_activity_started",
-            "recordingFailureReason" to null,
-            "localMediaPath" to "",
-            "assignedStationId" to (assignedStationId ?: ""),
-            "cancelledAt" to null,
-        )
-
-        if (location != null) {
-            payload["location"] = GeoPoint(location.latitude, location.longitude)
-            payload["lat"] = location.latitude
-            payload["lon"] = location.longitude
+        awaitSync: Boolean,
+    ): Boolean {
+        if (location == null) {
+            Log.w(TAG, "Skipping SOS location write because current location is unavailable")
+            return awaitSync
         }
 
-        Tasks.await(
-            firestore.collection("sos").document(sosId).set(payload),
-            FIREBASE_TIMEOUT_SECONDS,
-            TimeUnit.SECONDS,
+        val payload = mutableMapOf<String, Any?>(
+            "location" to GeoPoint(location.latitude, location.longitude),
+            "lat" to location.latitude,
+            "lon" to location.longitude,
+            "assignedStationId" to (assignedStationId ?: ""),
+            "lastLocationUpdateAt" to FieldValue.serverTimestamp(),
+        )
+
+        return enqueueSet(
+            task = firestore.collection("sos").document(sosId).set(payload, SetOptions.merge()),
+            operationName = "write SOS location",
+            awaitSync = awaitSync,
         )
     }
 
@@ -450,7 +718,8 @@ class SosForegroundService : Service() {
         sosId: String,
         sourceUserId: String,
         location: Location?,
-        assignedStationId: String?,
+        assignedStationMatch: StationMatch?,
+        awaitDispatch: Boolean,
     ) {
         try {
             val sourceProfile = getUserProfileSnapshot(sourceUserId)
@@ -458,14 +727,13 @@ class SosForegroundService : Service() {
                 sourceProfile?.getString("name")?.takeIf { it.isNotBlank() } ?: "Emergency contact"
             val sourcePhone = sourceProfile?.getString("phone")?.trim() ?: ""
 
-            val contactsSnapshot = Tasks.await(
+            val contactsSnapshot = getQuerySnapshotWithCacheFallback(
                 firestore.collection("users")
                     .document(sourceUserId)
-                    .collection("emergency_contacts")
-                    .get(),
-                FIREBASE_TIMEOUT_SECONDS,
-                TimeUnit.SECONDS,
-            )
+                    .collection("emergency_contacts"),
+                operationName = "load linked emergency contacts",
+                preferRemote = awaitDispatch,
+            ) ?: return
 
             val batch = firestore.batch()
             var targetCount = 0
@@ -486,7 +754,9 @@ class SosForegroundService : Service() {
                     "status" to "active",
                     "timestamp" to FieldValue.serverTimestamp(),
                     "isRead" to false,
-                    "assignedStationId" to (assignedStationId ?: ""),
+                    "assignedStationId" to (assignedStationMatch?.stationId ?: ""),
+                    "assignedStationName" to (assignedStationMatch?.stationName ?: ""),
+                    "assignedStationContactNumber" to (assignedStationMatch?.contactNumber ?: ""),
                 )
                 if (location != null) {
                     payload["location"] = GeoPoint(location.latitude, location.longitude)
@@ -501,10 +771,10 @@ class SosForegroundService : Service() {
             }
 
             if (targetCount > 0) {
-                Tasks.await(
-                    batch.commit(),
-                    FIREBASE_TIMEOUT_SECONDS,
-                    TimeUnit.SECONDS,
+                enqueueWrite(
+                    task = batch.commit(),
+                    operationName = "dispatch incoming SOS alerts",
+                    awaitSync = awaitDispatch,
                 )
             }
             Log.i(TAG, "Incoming SOS alerts dispatched count=$targetCount")
@@ -513,16 +783,67 @@ class SosForegroundService : Service() {
         }
     }
 
+    private fun shareMediaLinkWithLinkedEmergencyContacts(
+        sosId: String,
+        sourceUserId: String,
+        mediaUrl: String,
+    ) {
+        try {
+            val contactsSnapshot = getQuerySnapshotWithCacheFallback(
+                firestore.collection("users")
+                    .document(sourceUserId)
+                    .collection("emergency_contacts"),
+                operationName = "load linked emergency contacts for media sync",
+            ) ?: return
+
+            val batch = firestore.batch()
+            var targetCount = 0
+            for (contactDoc in contactsSnapshot.documents) {
+                val targetUserId = contactDoc.getString("contactUserId")?.trim()
+                if (targetUserId.isNullOrEmpty() || targetUserId == sourceUserId) {
+                    continue
+                }
+
+                val targetAlertRef = firestore.collection("users")
+                    .document(targetUserId)
+                    .collection("incoming_sos")
+                    .document(sosId)
+                batch.set(
+                    targetAlertRef,
+                    mapOf(
+                        "sosId" to sosId,
+                        "sourceUserId" to sourceUserId,
+                        "sourceContactId" to contactDoc.id,
+                        "mediaUrl" to mediaUrl,
+                    ),
+                    SetOptions.merge(),
+                )
+                targetCount++
+            }
+
+            if (targetCount > 0) {
+                enqueueWrite(
+                    task = batch.commit(),
+                    operationName = "dispatch SOS media links",
+                    awaitSync = true,
+                )
+            }
+            Log.i(TAG, "Incoming SOS media links dispatched count=$targetCount")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to sync SOS media links to emergency contacts", e)
+        }
+    }
+
     @SuppressLint("MissingPermission")
     private fun getCurrentLocationSafely(): Location? {
-        if (!hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)) {
+        if (!hasAnyLocationPermission()) {
             return null
         }
         return try {
             val cancellationTokenSource = CancellationTokenSource()
             val location = Tasks.await(
                 fusedLocationClient.getCurrentLocation(
-                    Priority.PRIORITY_HIGH_ACCURACY,
+                    resolveLocationPriority(),
                     cancellationTokenSource.token,
                 ),
                 LOCATION_TIMEOUT_SECONDS,
@@ -545,31 +866,47 @@ class SosForegroundService : Service() {
         }
         val recipients = linkedSetOf<String>()
         normalizePhoneNumber(stationContactNumber)?.let { recipients.add(it) }
-        if (recipients.isEmpty()) {
-            recipients.add(DEFAULT_EMERGENCY_NUMBER)
-        }
         recipients.addAll(getEmergencyContactNumbers(userId))
         if (recipients.isEmpty()) {
             return
         }
 
-        val sourceName = getUserProfileSnapshot(userId)
+        val sourceProfile = getUserProfileSnapshot(userId)
+        val cachedProfile = getCachedUserProfile(userId)
+        val sourceName = sourceProfile
             ?.getString("name")
             ?.takeIf { it.isNotBlank() }
+            ?: cachedProfile?.name
             ?: "Suraksha Setu user"
+        val sourcePhone = sourceProfile
+            ?.getString("phone")
+            ?.takeIf { it.isNotBlank() }
+            ?: cachedProfile?.phone
         val latText = location?.latitude?.let { String.format(Locale.US, "%.6f", it) } ?: "unknown"
         val lonText = location?.longitude?.let { String.format(Locale.US, "%.6f", it) } ?: "unknown"
         val mapsUrl =
             if (location != null) "https://maps.google.com/?q=$latText,$lonText" else "unavailable"
-        val message = "SOS ALERT from $sourceName. Lat:$latText Lon:$lonText Map:$mapsUrl"
+        val normalizedStationNumber = normalizePhoneNumber(stationContactNumber)
+        val message = buildString {
+            append("SOS ALERT from $sourceName.")
+            if (!sourcePhone.isNullOrBlank()) {
+                append(" Phone:$sourcePhone.")
+            }
+            append(" Lat:$latText Lon:$lonText Map:$mapsUrl.")
+            if (!normalizedStationNumber.isNullOrBlank()) {
+                append(" Police:$normalizedStationNumber.")
+            }
+            append(" Video link will sync when internet returns.")
+        }
 
         val smsManager =
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 getSystemService(SmsManager::class.java)
             } else {
-                null
+                @Suppress("DEPRECATION")
+                SmsManager.getDefault()
             } ?: run {
-                Log.w(TAG, "SMS fallback unavailable on this OS build without deprecated APIs")
+                Log.w(TAG, "SMS fallback unavailable because SmsManager could not be resolved")
                 return
             }
 
@@ -587,31 +924,171 @@ class SosForegroundService : Service() {
         }
     }
 
+    private fun triggerOfflineEmergencyFallback(
+        userId: String,
+        location: Location?,
+        stationContactNumber: String?,
+    ) {
+        triggerSmsFallback(
+            userId = userId,
+            location = location,
+            stationContactNumber = stationContactNumber,
+        )
+        deferredEmergencyDialNumber = DEFAULT_EMERGENCY_NUMBER
+    }
+
+    private fun placeEmergencyCall(number: String) {
+        val normalizedNumber = normalizePhoneNumber(number) ?: DEFAULT_EMERGENCY_NUMBER
+        val action =
+            if (hasPermission(Manifest.permission.CALL_PHONE)) {
+                Intent.ACTION_CALL
+            } else {
+                Intent.ACTION_DIAL
+            }
+        val callIntent = Intent(action, Uri.parse("tel:$normalizedNumber")).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+
+        try {
+            startActivity(callIntent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to launch emergency call for $normalizedNumber", e)
+        }
+    }
+
     private fun getEmergencyContactNumbers(userId: String): List<String> {
         return try {
-            val snapshot = Tasks.await(
+            val snapshot = getQuerySnapshotWithCacheFallback(
                 firestore.collection("users")
                     .document(userId)
-                    .collection("emergency_contacts")
-                    .get(),
-                FIREBASE_TIMEOUT_SECONDS,
-                TimeUnit.SECONDS,
+                    .collection("emergency_contacts"),
+                operationName = "load emergency contact numbers",
             )
-            snapshot.documents.mapNotNull { normalizePhoneNumber(it.getString("phone")) }
+            val numbers = snapshot?.documents
+                ?.mapNotNull { contactDoc ->
+                    normalizePhoneNumber(contactDoc.getString("phone"))
+                        ?: resolveLinkedEmergencyContactPhone(contactDoc.getString("contactUserId"))
+                }
+                .orEmpty()
+            if (numbers.isNotEmpty()) {
+                numbers
+            } else {
+                getCachedEmergencyContactNumbers(userId)
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to read emergency contacts", e)
+            getCachedEmergencyContactNumbers(userId)
+        }
+    }
+
+    private fun resolveLinkedEmergencyContactPhone(contactUserId: String?): String? {
+        val normalizedUserId = contactUserId?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val linkedProfile = getUserProfileSnapshot(normalizedUserId) ?: return null
+        return normalizePhoneNumber(linkedProfile.getString("phone"))
+    }
+
+    private fun normalizePhoneNumber(number: String?): String? {
+        val trimmed = number?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        val hasLeadingPlus = trimmed.startsWith("+")
+        val digitsOnly = trimmed.filter { it.isDigit() }
+        if (digitsOnly.isBlank()) {
+            return null
+        }
+        return if (hasLeadingPlus) "+$digitsOnly" else digitsOnly
+    }
+
+    private fun getCachedEmergencyContactNumbers(userId: String): List<String> {
+        return try {
+            val cacheFile = File(filesDir, LOCAL_EMERGENCY_CONTACTS_CACHE_FILE)
+            if (!cacheFile.exists()) {
+                return emptyList()
+            }
+            val decoded = JSONObject(cacheFile.readText())
+            if (decoded.optString("userId").trim() != userId.trim()) {
+                return emptyList()
+            }
+            val contacts = decoded.optJSONArray("contacts") ?: return emptyList()
+            buildList {
+                for (index in 0 until contacts.length()) {
+                    val phone = normalizePhoneNumber(
+                        contacts.optJSONObject(index)?.optString("phone"),
+                    )
+                    if (!phone.isNullOrBlank()) {
+                        add(phone)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to read cached emergency contacts", e)
             emptyList()
         }
     }
 
-    private fun normalizePhoneNumber(number: String?): String? {
-        val normalized = number
-            ?.replace("\\s".toRegex(), "")
-            ?.replace("-", "")
-            ?.trim()
-            ?.takeIf { it.isNotBlank() }
-            ?: return null
-        return normalized
+    private fun getCachedUserProfile(userId: String): CachedUserProfile? {
+        return try {
+            val cacheFile = File(filesDir, LOCAL_USER_PROFILE_CACHE_FILE)
+            if (!cacheFile.exists()) {
+                return null
+            }
+            val decoded = JSONObject(cacheFile.readText())
+            val cachedUserId = decoded.optString("userId").trim()
+            if (cachedUserId != userId.trim()) {
+                return null
+            }
+            CachedUserProfile(
+                userId = cachedUserId,
+                name = decoded.optString("name").trim().ifBlank { null },
+                phone = normalizePhoneNumber(decoded.optString("phone")),
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to read cached user profile", e)
+            null
+        }
+    }
+
+    private fun persistLocalSosMetadata() {
+        val sosId = activeSosId?.trim().takeIf { !it.isNullOrEmpty() } ?: return
+        try {
+            val metadataDir = File(filesDir, LOCAL_SOS_METADATA_DIR)
+            if (!metadataDir.exists()) {
+                metadataDir.mkdirs()
+            }
+            val payload = JSONObject().apply {
+                put("sosId", sosId)
+                put("userId", activeUserId ?: JSONObject.NULL)
+                put("triggerSource", activeTriggerSource ?: JSONObject.NULL)
+                put("createdAtEpochMs", activeCreatedAtEpochMs ?: System.currentTimeMillis())
+                put("localMediaPath", activeRecordingPath ?: JSONObject.NULL)
+                put("latitude", activeLatitude ?: JSONObject.NULL)
+                put("longitude", activeLongitude ?: JSONObject.NULL)
+                put("assignedStationId", activeStationMatch?.stationId ?: JSONObject.NULL)
+                put("assignedStationName", activeStationMatch?.stationName ?: JSONObject.NULL)
+                put(
+                    "assignedStationContactNumber",
+                    activeStationMatch?.contactNumber ?: JSONObject.NULL,
+                )
+            }
+            File(metadataDir, "$sosId.json").writeText(payload.toString())
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to persist local SOS metadata", e)
+        }
+    }
+
+    private fun clearLocalSosMetadata(sosId: String) {
+        try {
+            val metadataFile = File(File(filesDir, LOCAL_SOS_METADATA_DIR), "${sosId.trim()}.json")
+            if (metadataFile.exists() && !metadataFile.delete()) {
+                Log.w(TAG, "Failed to delete local SOS metadata for sosId=$sosId")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to clear local SOS metadata", e)
+        }
+    }
+
+    private fun consumeDeferredEmergencyDialNumber(): String? {
+        val number = deferredEmergencyDialNumber
+        deferredEmergencyDialNumber = null
+        return number
     }
 
     private fun hasInternetConnection(): Boolean {
@@ -619,15 +1096,30 @@ class SosForegroundService : Service() {
             getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
         val activeNetwork = connectivityManager.activeNetwork ?: return false
         val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork) ?: return false
-        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }
+
+    private fun resolveSourceUserIdForSos(sosId: String): String? {
+        activeUserId?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+
+        return try {
+            val snapshot = getDocumentSnapshotWithCacheFallback(
+                firestore.collection("sos").document(sosId),
+                operationName = "resolve SOS source user",
+            ) ?: return null
+            snapshot.getString("userId")?.trim()?.takeIf { it.isNotEmpty() }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to resolve source user for sosId=$sosId", e)
+            null
+        }
     }
 
     private fun getUserProfileSnapshot(userId: String): DocumentSnapshot? {
         return try {
-            Tasks.await(
-                firestore.collection("users").document(userId).get(),
-                FIREBASE_TIMEOUT_SECONDS,
-                TimeUnit.SECONDS,
+            getDocumentSnapshotWithCacheFallback(
+                firestore.collection("users").document(userId),
+                operationName = "load user profile",
             )
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load user profile for $userId", e)
@@ -640,11 +1132,10 @@ class SosForegroundService : Service() {
         longitude: Double,
     ): StationMatch? {
         return try {
-            val snapshot = Tasks.await(
-                firestore.collection("police_stations").get(),
-                FIREBASE_TIMEOUT_SECONDS,
-                TimeUnit.SECONDS,
-            )
+            val snapshot = getQuerySnapshotWithCacheFallback(
+                firestore.collection("police_stations"),
+                operationName = "load police stations",
+            ) ?: return null
             var nearestWithinRadius: StationMatch? = null
             var nearestWithinRadiusKm = Double.MAX_VALUE
             var nearestAny: StationMatch? = null
@@ -657,6 +1148,7 @@ class SosForegroundService : Service() {
                 val distanceKm = haversineKm(latitude, longitude, stationLat, stationLon)
                 val stationMatch = StationMatch(
                     stationId = doc.id,
+                    stationName = doc.getString("stationName"),
                     contactNumber = doc.getString("contactNumber"),
                 )
 
@@ -677,6 +1169,131 @@ class SosForegroundService : Service() {
             Log.e(TAG, "Failed to resolve nearest station", e)
             null
         }
+    }
+
+    private fun enqueueSet(
+        task: Task<Void>,
+        operationName: String,
+        awaitSync: Boolean,
+    ): Boolean {
+        return enqueueWrite(
+            task = task,
+            operationName = operationName,
+            awaitSync = awaitSync,
+        )
+    }
+
+    private fun enqueueWrite(
+        task: Task<Void>,
+        operationName: String,
+        awaitSync: Boolean,
+    ): Boolean {
+        if (!awaitSync) {
+            task.addOnFailureListener { error ->
+                Log.e(TAG, "Failed to queue Firestore write: $operationName", error)
+            }
+            return false
+        }
+
+        return try {
+            Tasks.await(task, FIREBASE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            true
+        } catch (e: Exception) {
+            if (isLikelyConnectivityIssue(e)) {
+                Log.w(TAG, "Firestore write will continue best-effort: $operationName", e)
+                false
+            } else {
+                throw e
+            }
+        }
+    }
+
+    private fun getDocumentSnapshotWithCacheFallback(
+        reference: DocumentReference,
+        operationName: String,
+        preferRemote: Boolean = hasInternetConnection(),
+    ): DocumentSnapshot? {
+        if (!preferRemote) {
+            return getCachedDocumentSnapshot(reference, operationName)
+        }
+
+        return try {
+            Tasks.await(reference.get(), FIREBASE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        } catch (e: Exception) {
+            if (isLikelyConnectivityIssue(e)) {
+                Log.w(TAG, "Falling back to cached Firestore document for $operationName", e)
+                getCachedDocumentSnapshot(reference, operationName)
+            } else {
+                throw e
+            }
+        }
+    }
+
+    private fun getCachedDocumentSnapshot(
+        reference: DocumentReference,
+        operationName: String,
+    ): DocumentSnapshot? {
+        return try {
+            Tasks.await(reference.get(Source.CACHE), FIREBASE_CACHE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        } catch (e: Exception) {
+            Log.w(TAG, "Cached Firestore document unavailable for $operationName", e)
+            null
+        }
+    }
+
+    private fun getQuerySnapshotWithCacheFallback(
+        query: Query,
+        operationName: String,
+        preferRemote: Boolean = hasInternetConnection(),
+    ): QuerySnapshot? {
+        if (!preferRemote) {
+            return getCachedQuerySnapshot(query, operationName)
+        }
+
+        return try {
+            Tasks.await(query.get(), FIREBASE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        } catch (e: Exception) {
+            if (isLikelyConnectivityIssue(e)) {
+                Log.w(TAG, "Falling back to cached Firestore query for $operationName", e)
+                getCachedQuerySnapshot(query, operationName)
+            } else {
+                throw e
+            }
+        }
+    }
+
+    private fun getCachedQuerySnapshot(
+        query: Query,
+        operationName: String,
+    ): QuerySnapshot? {
+        return try {
+            Tasks.await(query.get(Source.CACHE), FIREBASE_CACHE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        } catch (e: Exception) {
+            Log.w(TAG, "Cached Firestore query unavailable for $operationName", e)
+            null
+        }
+    }
+
+    private fun isLikelyConnectivityIssue(error: Throwable): Boolean {
+        var current: Throwable? = error
+        while (current != null) {
+            when (current) {
+                is TimeoutException,
+                is UnknownHostException,
+                is SocketTimeoutException,
+                -> return true
+                is FirebaseFirestoreException -> {
+                    if (
+                        current.code == FirebaseFirestoreException.Code.UNAVAILABLE ||
+                        current.code == FirebaseFirestoreException.Code.DEADLINE_EXCEEDED
+                    ) {
+                        return true
+                    }
+                }
+            }
+            current = current.cause
+        }
+        return false
     }
 
     private fun haversineKm(
@@ -702,6 +1319,19 @@ class SosForegroundService : Service() {
         return ActivityCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
     }
 
+    private fun hasAnyLocationPermission(): Boolean {
+        return hasPermission(Manifest.permission.ACCESS_FINE_LOCATION) ||
+            hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION)
+    }
+
+    private fun resolveLocationPriority(): Int {
+        return if (hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)) {
+            Priority.PRIORITY_HIGH_ACCURACY
+        } else {
+            Priority.PRIORITY_BALANCED_POWER_ACCURACY
+        }
+    }
+
     override fun onDestroy() {
         stopSelfJob?.cancel()
         stopSelfJob = null
@@ -710,6 +1340,13 @@ class SosForegroundService : Service() {
         sosFlowRunning = false
         activeSosId = null
         activeUserId = null
+        activeTriggerSource = null
+        activeCreatedAtEpochMs = null
+        activeRecordingPath = null
+        activeLatitude = null
+        activeLongitude = null
+        activeStationMatch = null
+        deferredEmergencyDialNumber = null
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)

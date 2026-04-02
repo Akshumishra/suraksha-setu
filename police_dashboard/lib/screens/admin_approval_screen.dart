@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../models/police_registration_request.dart';
 import '../services/police_onboarding_service.dart';
+import '../utils/firebase_error_mapper.dart';
 
 class AdminApprovalScreen extends StatefulWidget {
   const AdminApprovalScreen({super.key});
@@ -131,12 +132,16 @@ class _AdminApprovalScreenState extends State<AdminApprovalScreen> {
       await PoliceOnboardingService.instance.approveRequest(requestId);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Request approved. Credentials emailed.')),
+        const SnackBar(content: Text('Request approved.')),
       );
     } catch (e) {
       if (!mounted) return;
+      final message = FirebaseErrorMapper.toMessage(
+        e,
+        fallback: 'Approval failed. Please try again.',
+      );
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Approval failed: $e')),
+        SnackBar(content: Text(message)),
       );
     } finally {
       if (mounted) {
@@ -190,8 +195,12 @@ class _AdminApprovalScreenState extends State<AdminApprovalScreen> {
       );
     } catch (e) {
       if (!mounted) return;
+      final message = FirebaseErrorMapper.toMessage(
+        e,
+        fallback: 'Rejection failed. Please try again.',
+      );
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Rejection failed: $e')),
+        SnackBar(content: Text(message)),
       );
     } finally {
       reasonCtrl.dispose();

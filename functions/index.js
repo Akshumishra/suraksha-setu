@@ -12,11 +12,15 @@ const SMTP_PORT = Number(process.env.SMTP_PORT || "587");
 const SMTP_USER = process.env.SMTP_USER;
 const SMTP_PASS = process.env.SMTP_PASS;
 const SMTP_FROM = process.env.SMTP_FROM || "no-reply@surakshasetu.in";
-const OFFICIAL_EMAIL_DOMAINS = (process.env.OFFICIAL_EMAIL_DOMAINS ||
-  "police.gov.in,gov.in")
+const BOOTSTRAP_ADMIN_EMAILS = (process.env.BOOTSTRAP_ADMIN_EMAILS ||
+  "surakshasetu47@gmail.com")
     .split(",")
-    .map((domain) => domain.trim().toLowerCase())
+    .map((email) => email.trim().toLowerCase())
     .filter(Boolean);
+
+function isBootstrapAdminEmail(email) {
+  return BOOTSTRAP_ADMIN_EMAILS.includes(String(email || "").trim().toLowerCase());
+}
 
 function normalizePoliceId(policeId) {
   return policeId.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, "");
@@ -24,14 +28,6 @@ function normalizePoliceId(policeId) {
 
 function normalizePhone(phone) {
   return phone.trim().replace(/\s+/g, "");
-}
-
-function isAllowedOfficialEmail(email) {
-  const normalized = email.trim().toLowerCase();
-  const atIndex = normalized.lastIndexOf("@");
-  if (atIndex < 0) return false;
-  const domain = normalized.substring(atIndex + 1);
-  return OFFICIAL_EMAIL_DOMAINS.includes(domain);
 }
 
 function validateRegistrationPayload(rawData) {
@@ -58,9 +54,6 @@ function validateRegistrationPayload(rawData) {
   if (!Number.isFinite(jurisdictionRadius) || jurisdictionRadius <= 0) {
     throw new HttpsError("invalid-argument", "Jurisdiction radius must be positive.");
   }
-  if (!isAllowedOfficialEmail(email)) {
-    throw new HttpsError("invalid-argument", "Official email domain is not allowed.");
-  }
 
   return {
     officerName,
@@ -81,16 +74,62 @@ async function assertAdmin(contextAuth) {
   }
 
   const claimRole = String(contextAuth.token?.role || "").toLowerCase();
-  if (claimRole === "admin") {
+  const tokenEmail = String(contextAuth.token?.email || "").toLowerCase();
+  if (claimRole === "admin" || isBootstrapAdminEmail(tokenEmail)) {
     return contextAuth.uid;
   }
 
   const userDoc = await db.collection("users").doc(contextAuth.uid).get();
   const userRole = String(userDoc.data()?.role || "").toLowerCase();
-  if (userRole !== "admin") {
+  const userEmail = String(userDoc.data()?.email || "").toLowerCase();
+  if (userRole !== "admin" && !isBootstrapAdminEmail(userEmail)) {
     throw new HttpsError("permission-denied", "Admin role required.");
   }
   return contextAuth.uid;
+}
+
+async function assertPolice(contextAuth) {
+  if (!contextAuth) {
+    throw new HttpsError("unauthenticated", "Authentication required.");
+  }
+
+  const claimRole = String(contextAuth.token?.role || "").toLowerCase();
+  const claimStationId = String(contextAuth.token?.stationId || "").trim();
+  if (claimRole === "police" && claimStationId) {
+    return {
+      uid: contextAuth.uid,
+      stationId: claimStationId,
+    };
+  }
+
+  const userDoc = await db.collection("users").doc(contextAuth.uid).get();
+  const userRole = String(userDoc.data()?.role || "").toLowerCase();
+  const userStationId = String(userDoc.data()?.stationId || "").trim();
+  if (userRole !== "police") {
+    throw new HttpsError("permission-denied", "Police role required.");
+  }
+  if (!userStationId) {
+    throw new HttpsError(
+        "failed-precondition",
+        "Police account is missing a station assignment.",
+    );
+  }
+
+  return {
+    uid: contextAuth.uid,
+    stationId: userStationId,
+  };
+}
+
+function nextAllowedPoliceSosStatus(currentStatus) {
+  switch (String(currentStatus || "").trim().toLowerCase()) {
+    case "active":
+      return "accepted";
+    case "accepted":
+      return "resolved";
+    default:
+      return null;
+  }
 }
 
 function generateSecurePassword(length = 18) {
@@ -367,4 +406,87 @@ exports.rejectPoliceRegistrationRequest = onCall(async (request) => {
   });
 
   return {requestId, status: "rejected"};
+});
+
+exports.updateSosCaseStatus = onCall(async (request) => {
+  const policeSession = await assertPolice(request.auth);
+  const caseId = String(request.data?.caseId || "").trim();
+  const nextStatus = String(request.data?.status || "").trim().toLowerCase();
+  const resolutionReport = String(request.data?.resolutionReport || "").trim();
+
+  if (!caseId) {
+    throw new HttpsError("invalid-argument", "caseId is required.");
+  }
+  if (!nextStatus) {
+    throw new HttpsError("invalid-argument", "status is required.");
+  }
+
+  const sosRef = db.collection("sos").doc(caseId);
+  const sosDoc = await sosRef.get();
+  if (!sosDoc.exists) {
+    throw new HttpsError("not-found", "SOS case not found.");
+  }
+
+  const sosData = sosDoc.data() || {};
+  const assignedStationId = String(sosData.assignedStationId || "").trim();
+  if (!assignedStationId) {
+    throw new HttpsError(
+        "failed-precondition",
+        "This SOS case is not assigned to a police station yet.",
+    );
+  }
+  if (assignedStationId !== policeSession.stationId) {
+    throw new HttpsError(
+        "permission-denied",
+        "This SOS case is assigned to a different police station.",
+    );
+  }
+
+  const currentStatus = String(sosData.status || "").trim().toLowerCase();
+  const allowedStatus = nextAllowedPoliceSosStatus(currentStatus);
+  if (!allowedStatus) {
+    throw new HttpsError(
+        "failed-precondition",
+        `SOS cases in "${currentStatus || "unknown"}" status cannot be updated here.`,
+    );
+  }
+  if (nextStatus !== allowedStatus) {
+    throw new HttpsError(
+        "failed-precondition",
+        `Invalid status transition. ${currentStatus.toUpperCase()} can only move to ${allowedStatus.toUpperCase()}.`,
+    );
+  }
+
+  if (nextStatus === "resolved" && !resolutionReport) {
+    throw new HttpsError(
+        "invalid-argument",
+        "resolutionReport is required when resolving an SOS case.",
+    );
+  }
+
+  const updatePayload = {
+    status: nextStatus,
+  };
+
+  if (nextStatus === "resolved") {
+    updatePayload.resolutionReport = resolutionReport;
+    updatePayload.resolvedAt = admin.firestore.FieldValue.serverTimestamp();
+    updatePayload.resolvedBy = policeSession.uid;
+  }
+
+  await sosRef.update(updatePayload);
+
+  logger.info("SOS status updated", {
+    caseId,
+    updatedBy: policeSession.uid,
+    stationId: policeSession.stationId,
+    previousStatus: currentStatus,
+    nextStatus,
+    hasResolutionReport: nextStatus === "resolved",
+  });
+
+  return {
+    caseId,
+    status: nextStatus,
+  };
 });

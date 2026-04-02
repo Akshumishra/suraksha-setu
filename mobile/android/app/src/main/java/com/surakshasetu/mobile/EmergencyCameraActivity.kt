@@ -38,7 +38,7 @@ class EmergencyCameraActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "EmergencyCameraActivity"
-        private const val MAX_RECORDING_DURATION_MS = 45_000L
+        private const val MAX_RECORDING_DURATION_MS = 15_000L
     }
 
     private lateinit var previewView: PreviewView

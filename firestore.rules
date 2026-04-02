@@ -32,9 +32,19 @@ service cloud.firestore {
         : null;
     }
 
+    function tokenEmail() {
+      return isSignedIn() && request.auth.token.email is string
+        ? request.auth.token.email
+        : null;
+    }
+
+    function isBootstrapAdmin() {
+      return tokenEmail() == 'surakshasetu47@gmail.com';
+    }
+
     function isAdmin() {
       return isSignedIn() &&
-        (tokenRole() == 'admin' || profileRole() == 'admin');
+        (tokenRole() == 'admin' || profileRole() == 'admin' || isBootstrapAdmin());
     }
 
     function isPolice() {
@@ -50,14 +60,180 @@ service cloud.firestore {
           : null);
     }
 
+    function requesterTokenStationId() {
+      return isSignedIn() && request.auth.token.stationId is string
+        ? request.auth.token.stationId
+        : null;
+    }
+
+    function requesterProfileStationId() {
+      return requesterProfile() != null && requesterProfile().stationId is string
+        ? requesterProfile().stationId
+        : null;
+    }
+
+    function matchesAssignedStation(resourceData) {
+      return resourceData.assignedStationId is string && (
+        (requesterTokenStationId() != null &&
+          resourceData.assignedStationId == requesterTokenStationId()) ||
+        (requesterProfileStationId() != null &&
+          resourceData.assignedStationId == requesterProfileStationId())
+      );
+    }
+
     function isAssignedPolice(resourceData) {
       return isPolice() &&
-        resourceData.assignedStationId is string &&
-        requesterStationId() != null &&
-        resourceData.assignedStationId == requesterStationId();
+        matchesAssignedStation(resourceData);
+    }
+
+    function isValidPoliceRegistrationRequestCreate(requestId) {
+      return request.resource.data.keys().hasOnly([
+          'officerName',
+          'policeId',
+          'email',
+          'stationName',
+          'contactNumber',
+          'latitude',
+          'longitude',
+          'jurisdictionRadius',
+          'idProofUrl',
+          'status',
+          'createdAt',
+          'updatedAt'
+        ])
+        && request.resource.data.officerName is string
+        && request.resource.data.officerName.size() > 0
+        && request.resource.data.policeId is string
+        && request.resource.data.policeId.size() > 0
+        && requestId == request.resource.data.policeId
+        && request.resource.data.email is string
+        && request.resource.data.email.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$')
+        && request.resource.data.stationName is string
+        && request.resource.data.stationName.size() > 0
+        && request.resource.data.contactNumber is string
+        && request.resource.data.contactNumber.size() > 0
+        && request.resource.data.latitude is number
+        && request.resource.data.latitude >= -90
+        && request.resource.data.latitude <= 90
+        && request.resource.data.longitude is number
+        && request.resource.data.longitude >= -180
+        && request.resource.data.longitude <= 180
+        && request.resource.data.jurisdictionRadius is number
+        && request.resource.data.jurisdictionRadius > 0
+        && (
+          !('idProofUrl' in request.resource.data) ||
+          request.resource.data.idProofUrl == null ||
+          request.resource.data.idProofUrl is string
+        )
+        && request.resource.data.status == 'pending'
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.updatedAt is timestamp
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+    }
+
+    function isValidPoliceRegistrationApprovalUpdate() {
+      return request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          'status',
+          'approvedAt',
+          'approvedBy',
+          'policeUid',
+          'stationId',
+          'updatedAt',
+          'emailDeliveryStatus',
+          'credentialsSentAt',
+          'emailError'
+        ])
+        && resource.data.status == 'pending'
+        && request.resource.data.status == 'approved'
+        && request.resource.data.approvedAt is timestamp
+        && request.resource.data.approvedAt == request.time
+        && request.resource.data.approvedBy is string
+        && request.resource.data.approvedBy.size() > 0
+        && request.resource.data.policeUid is string
+        && request.resource.data.policeUid.size() > 0
+        && request.resource.data.stationId is string
+        && request.resource.data.stationId.size() > 0
+        && request.resource.data.updatedAt is timestamp
+        && request.resource.data.updatedAt == request.time
+        && (
+          !('emailDeliveryStatus' in request.resource.data) ||
+          request.resource.data.emailDeliveryStatus in [
+            'password-reset-sent',
+            'password-reset-failed'
+          ]
+        )
+        && (
+          !('credentialsSentAt' in request.resource.data) ||
+          (
+            request.resource.data.credentialsSentAt is timestamp &&
+            request.resource.data.credentialsSentAt == request.time
+          )
+        )
+        && (
+          !('emailError' in request.resource.data) ||
+          request.resource.data.emailError == null ||
+          request.resource.data.emailError is string
+        );
+    }
+
+    function isValidPoliceRegistrationRejectionUpdate() {
+      return request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          'status',
+          'rejectedAt',
+          'rejectedBy',
+          'rejectionReason',
+          'updatedAt'
+        ])
+        && resource.data.status == 'pending'
+        && request.resource.data.status == 'rejected'
+        && request.resource.data.rejectedAt is timestamp
+        && request.resource.data.rejectedAt == request.time
+        && request.resource.data.rejectedBy is string
+        && request.resource.data.rejectedBy.size() > 0
+        && request.resource.data.updatedAt is timestamp
+        && request.resource.data.updatedAt == request.time
+        && (
+          !('rejectionReason' in request.resource.data) ||
+          request.resource.data.rejectionReason == null ||
+          request.resource.data.rejectionReason is string
+        );
     }
 
     match /users/{userId} {
+      function unchangedUserRole() {
+        return (
+            !('role' in request.resource.data) &&
+            !('role' in resource.data)
+          ) || (
+            'role' in request.resource.data &&
+            'role' in resource.data &&
+            request.resource.data.role == resource.data.role
+          );
+      }
+
+      function unchangedUserStationId() {
+        return (
+            !('stationId' in request.resource.data) &&
+            !('stationId' in resource.data)
+          ) || (
+            'stationId' in request.resource.data &&
+            'stationId' in resource.data &&
+            request.resource.data.stationId == resource.data.stationId
+          );
+      }
+
+      function unchangedUserPoliceId() {
+        return (
+            !('policeId' in request.resource.data) &&
+            !('policeId' in resource.data)
+          ) || (
+            'policeId' in request.resource.data &&
+            'policeId' in resource.data &&
+            request.resource.data.policeId == resource.data.policeId
+          );
+      }
+
       allow read: if isSelf(userId) || isAdmin() ||
         (isSignedIn() && resource.data.role == 'user');
       allow create: if isSelf(userId)
@@ -69,9 +245,9 @@ service cloud.firestore {
         && !('policeId' in request.resource.data);
       allow update: if (
           isSelf(userId) &&
-          request.resource.data.role == resource.data.role &&
-          request.resource.data.stationId == resource.data.stationId &&
-          request.resource.data.policeId == resource.data.policeId
+          unchangedUserRole() &&
+          unchangedUserStationId() &&
+          unchangedUserPoliceId()
         ) || isAdmin();
       allow delete: if isSelf(userId) || isAdmin();
 
@@ -92,9 +268,11 @@ service cloud.firestore {
             userId
           );
 
-        allow update: if isSelf(userId)
-          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['isRead'])
-          && request.resource.data.isRead is bool;
+        allow update: if (
+            isSelf(userId)
+            && request.resource.data.diff(resource.data).changedKeys().hasOnly(['isRead'])
+            && request.resource.data.isRead is bool
+          ) || isLinkedAlertMediaUpdate(userId);
 
         allow delete: if isSelf(userId);
       }
@@ -102,24 +280,35 @@ service cloud.firestore {
 
     match /police_registration_requests/{requestId} {
       allow read: if isAdmin();
-      allow create, update, delete: if false;
+      allow create: if isValidPoliceRegistrationRequestCreate(requestId);
+      allow update: if isAdmin() && (
+        isValidPoliceRegistrationApprovalUpdate() ||
+        isValidPoliceRegistrationRejectionUpdate()
+      );
+      allow delete: if false;
     }
 
     match /sos/{sosId} {
+      allow list: if isAdmin();
+
       allow create: if isSignedIn()
         && request.resource.data.userId == request.auth.uid
         && request.resource.data.status == 'active';
 
       allow read: if isSignedIn()
         && (
+          isAdmin() ||
           resource.data.userId == request.auth.uid ||
-          isAssignedPolice(resource.data)
+          isAssignedPolice(resource.data) ||
+          (isPolice() && resource.data.assignedStationId is string)
         );
 
       allow update: if isSignedIn() && (
         isUserCancellationUpdate() ||
         isPoliceStatusUpdate() ||
-        isUserMediaUpdate()
+        isUserMediaUpdate() ||
+        isUserRecordingMetadataUpdate() ||
+        isUserLiveLocationUpdate()
       );
 
       allow delete: if false;
@@ -134,12 +323,31 @@ service cloud.firestore {
       }
 
       function isPoliceStatusUpdate() {
+        return isPoliceAcceptedStatusUpdate() || isPoliceResolvedStatusUpdate();
+      }
+
+      function isPoliceAcceptedStatusUpdate() {
         return isAssignedPolice(resource.data)
           && request.resource.data.diff(resource.data).changedKeys().hasOnly(['status'])
-          && (
-            (resource.data.status == 'active' && request.resource.data.status == 'accepted') ||
-            (resource.data.status == 'accepted' && request.resource.data.status == 'resolved')
-          );
+          && resource.data.status == 'active'
+          && request.resource.data.status == 'accepted';
+      }
+
+      function isPoliceResolvedStatusUpdate() {
+        return isAssignedPolice(resource.data)
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+            'status',
+            'resolutionReport',
+            'resolvedAt',
+            'resolvedBy'
+          ])
+          && resource.data.status == 'accepted'
+          && request.resource.data.status == 'resolved'
+          && request.resource.data.resolutionReport is string
+          && request.resource.data.resolutionReport.size() > 0
+          && request.resource.data.resolvedAt is timestamp
+          && request.resource.data.resolvedBy is string
+          && request.resource.data.resolvedBy.size() > 0;
       }
 
       function isUserMediaUpdate() {
@@ -147,6 +355,51 @@ service cloud.firestore {
           && request.resource.data.diff(resource.data).changedKeys().hasOnly(['mediaUrl'])
           && request.resource.data.mediaUrl is string
           && request.resource.data.mediaUrl.size() > 0;
+      }
+
+      function isUserRecordingMetadataUpdate() {
+        return resource.data.userId == request.auth.uid
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+            'recordingStatus',
+            'recordingFailureReason',
+            'localMediaPath'
+          ])
+          && request.resource.data.recordingStatus is string
+          && request.resource.data.recordingStatus.size() > 0
+          && (
+            !('recordingFailureReason' in request.resource.data) ||
+            request.resource.data.recordingFailureReason == null ||
+            request.resource.data.recordingFailureReason is string
+          )
+          && (
+            !('localMediaPath' in request.resource.data) ||
+            request.resource.data.localMediaPath == null ||
+            request.resource.data.localMediaPath is string
+          );
+      }
+
+      function isUserLiveLocationUpdate() {
+        return resource.data.userId == request.auth.uid
+          && resource.data.status == 'active'
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+            'location',
+            'lat',
+            'lon',
+            'assignedStationId',
+            'lastLocationUpdateAt'
+          ])
+          && request.resource.data.location is latlng
+          && request.resource.data.lat is number
+          && request.resource.data.lon is number
+          && request.resource.data.lat >= -90
+          && request.resource.data.lat <= 90
+          && request.resource.data.lon >= -180
+          && request.resource.data.lon <= 180
+          && (
+            !('assignedStationId' in request.resource.data) ||
+            request.resource.data.assignedStationId is string
+          )
+          && request.resource.data.lastLocationUpdateAt is timestamp;
       }
     }
 
@@ -162,6 +415,20 @@ service cloud.firestore {
         && get(
           /databases/$(database)/documents/users/$(sourceUserId)/emergency_contacts/$(contactId)
         ).data.contactUserId == targetUserId;
+    }
+
+    function isLinkedAlertMediaUpdate(targetUserId) {
+      return isSignedIn()
+        && resource.data.sourceUserId == request.auth.uid
+        && resource.data.sourceContactId is string
+        && linkedEmergencyContactTargetsUser(
+          request.auth.uid,
+          resource.data.sourceContactId,
+          targetUserId
+        )
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly(['mediaUrl'])
+        && request.resource.data.mediaUrl is string
+        && request.resource.data.mediaUrl.size() > 0;
     }
   }
 }

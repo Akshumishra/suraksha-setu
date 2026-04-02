@@ -2,6 +2,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../services/police_onboarding_service.dart';
+import '../utils/firebase_error_mapper.dart';
 
 class PoliceRegistrationScreen extends StatefulWidget {
   const PoliceRegistrationScreen({super.key});
@@ -201,7 +202,7 @@ class _PoliceRegistrationScreenState extends State<PoliceRegistrationScreen> {
     final email = value.trim();
     final emailRegex = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
     if (!emailRegex.hasMatch(email)) {
-      return 'Enter a valid official email';
+      return 'Enter a valid email';
     }
     return null;
   }
@@ -234,8 +235,17 @@ class _PoliceRegistrationScreenState extends State<PoliceRegistrationScreen> {
       });
     } catch (e) {
       if (!mounted) return;
+      final message = FirebaseErrorMapper.toMessage(
+        e,
+        fallback:
+            'ID proof upload failed. You can continue without uploading proof.',
+      );
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('ID proof upload failed: $e')),
+        SnackBar(
+          content: Text(
+            '$message You can still submit the registration without ID proof.',
+          ),
+        ),
       );
     } finally {
       if (mounted) {
@@ -283,8 +293,12 @@ class _PoliceRegistrationScreenState extends State<PoliceRegistrationScreen> {
       });
     } catch (e) {
       if (!mounted) return;
+      final message = FirebaseErrorMapper.toMessage(
+        e,
+        fallback: 'Registration failed. Please try again.',
+      );
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Registration failed: $e')),
+        SnackBar(content: Text(message)),
       );
     } finally {
       if (mounted) {

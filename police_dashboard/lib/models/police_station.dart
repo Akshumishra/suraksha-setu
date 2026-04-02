@@ -8,6 +8,7 @@ class PoliceStation {
     required this.longitude,
     required this.contactNumber,
     required this.jurisdictionRadius,
+    this.policeId,
   });
 
   final String id;
@@ -16,6 +17,7 @@ class PoliceStation {
   final double longitude;
   final String contactNumber;
   final double jurisdictionRadius;
+  final String? policeId;
 
   factory PoliceStation.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data() ?? <String, dynamic>{};
@@ -26,6 +28,7 @@ class PoliceStation {
       longitude: (data['longitude'] as num?)?.toDouble() ?? 0,
       contactNumber: (data['contactNumber'] as String?) ?? '',
       jurisdictionRadius: (data['jurisdictionRadius'] as num?)?.toDouble() ?? 0,
+      policeId: (data['policeId'] as String?)?.trim(),
     );
   }
 

@@ -7,11 +7,9 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.PowerManager
-import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
-import kotlin.math.abs
 
 /**
  * Accessibility-based fallback for Volume Up + Volume Down SOS triggering.
@@ -25,14 +23,11 @@ import kotlin.math.abs
 class VolumeButtonService : AccessibilityService() {
 
     private val tag = "VolumeButtonService"
-    private val comboWindowMs = 1_500L
-    private val cooldownMs = 15_000L
-
-    private var lastVolumeUpDownMs = 0L
-    private var lastVolumeDownDownMs = 0L
-    private var lastTriggerMs = 0L
-    private var isVolumeUpPressed = false
-    private var isVolumeDownPressed = false
+    private val volumeSosGestureDetector =
+        VolumeSosGestureDetector(
+            onTrigger = { triggerSos() },
+            onLog = { message -> Log.i(tag, message) },
+        )
 
     private lateinit var keyguardManager: KeyguardManager
     private lateinit var powerManager: PowerManager
@@ -67,54 +62,20 @@ class VolumeButtonService : AccessibilityService() {
 
         when (event.action) {
             KeyEvent.ACTION_DOWN -> {
-                if (event.repeatCount > 0) {
-                    return super.onKeyEvent(event)
-                }
-
-                val now = SystemClock.elapsedRealtime()
-                if (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
-                    isVolumeUpPressed = true
-                    lastVolumeUpDownMs = now
-                } else {
-                    isVolumeDownPressed = true
-                    lastVolumeDownDownMs = now
-                }
-
-                val bothPressed = isVolumeUpPressed && isVolumeDownPressed
-                val withinWindow =
-                    lastVolumeUpDownMs > 0L &&
-                        lastVolumeDownDownMs > 0L &&
-                        abs(lastVolumeUpDownMs - lastVolumeDownDownMs) <= comboWindowMs
-
-                if (bothPressed || withinWindow) {
-                    if (now - lastTriggerMs < cooldownMs) {
-                        Log.i(tag, "Volume combo ignored during cooldown")
-                        return true
-                    }
-                    lastTriggerMs = now
-                    resetVolumeState()
-                    triggerSos()
-                    return true
-                }
+                volumeSosGestureDetector.onKeyDown(event.keyCode, event.repeatCount)
             }
 
             KeyEvent.ACTION_UP -> {
-                if (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
-                    isVolumeUpPressed = false
-                } else {
-                    isVolumeDownPressed = false
-                }
+                volumeSosGestureDetector.onKeyUp(event.keyCode)
             }
         }
 
         return super.onKeyEvent(event)
     }
 
-    private fun resetVolumeState() {
-        isVolumeUpPressed = false
-        isVolumeDownPressed = false
-        lastVolumeUpDownMs = 0L
-        lastVolumeDownDownMs = 0L
+    override fun onDestroy() {
+        volumeSosGestureDetector.clear()
+        super.onDestroy()
     }
 
     private fun triggerSos() {
