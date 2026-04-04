@@ -1,12 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../config/sos_config.dart';
 import '../models/sos_case.dart';
 import '../services/sos_repository.dart';
+import 'video_player_screen.dart';
 
 class SosHistoryScreen extends StatefulWidget {
   const SosHistoryScreen({super.key});
@@ -120,13 +120,18 @@ class _SosHistoryScreenState extends State<SosHistoryScreen> {
                       const SizedBox(height: 10),
                       Align(
                         alignment: Alignment.centerRight,
-                        child: FilledButton.tonalIcon(
-                          onPressed: () => _showMediaLinkDialog(
-                            context: context,
-                            mediaUrl: mediaUrl!,
+                        child: FilledButton.icon(
+                          onPressed: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => VideoPlayerScreen(
+                                videoUrl: mediaUrl!,
+                                title: 'SOS Recording · $dateText',
+                              ),
+                            ),
                           ),
-                          icon: const Icon(Icons.video_library_outlined),
-                          label: const Text('View video link'),
+                          icon: const Icon(Icons.play_circle_outline),
+                          label: const Text('Play Video'),
                         ),
                       ),
                     ],
@@ -165,50 +170,6 @@ class _SosHistoryScreenState extends State<SosHistoryScreen> {
     }
   }
 
-  Future<void> _showMediaLinkDialog({
-    required BuildContext context,
-    required String mediaUrl,
-  }) async {
-    final messenger = ScaffoldMessenger.of(context);
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Emergency Video Link'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'This is the same 15 second video link shared with police and your emergency contacts.',
-              ),
-              const SizedBox(height: 12),
-              SelectableText(mediaUrl),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton.icon(
-            onPressed: () async {
-              await Clipboard.setData(ClipboardData(text: mediaUrl));
-              if (!context.mounted) {
-                return;
-              }
-              messenger.showSnackBar(
-                const SnackBar(content: Text('Video link copied.')),
-              );
-            },
-            icon: const Icon(Icons.copy_all_outlined),
-            label: const Text('Copy link'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
-    );
-  }
 
   Widget _statusChip(String status) {
     final normalized = status.toLowerCase();

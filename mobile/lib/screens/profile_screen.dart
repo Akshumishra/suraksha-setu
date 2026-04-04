@@ -205,7 +205,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Widget _buildGenderAndAgeFields() {
     final genderField = DropdownButtonFormField<String>(
-      initialValue: _selectedGender,
+      value: _selectedGender,
       isExpanded: true,
       decoration: _inputDecoration(
         label: 'Gender',

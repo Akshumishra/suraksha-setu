@@ -579,7 +579,7 @@ class _StatusDropdownState extends State<_StatusDropdown> {
             Expanded(
               child: DropdownButtonFormField<String>(
                 key: ValueKey('${widget.caseId}_$_selected'),
-                initialValue: _selected,
+                value: _selected,
                 decoration: const InputDecoration(
                   labelText: 'Update Status',
                   border: OutlineInputBorder(),

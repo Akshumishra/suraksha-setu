@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../models/sos_alert.dart';
 import '../services/sos_alert_service.dart';
+import 'video_player_screen.dart';
 
 class SosAlertsScreen extends StatelessWidget {
   const SosAlertsScreen({super.key});
@@ -54,7 +54,7 @@ class SosAlertsScreen extends StatelessWidget {
                       : stationLabel;
               final mediaUrl = alert.mediaUrl?.trim();
               final mediaStatus = mediaUrl != null && mediaUrl.isNotEmpty
-                  ? 'Video link ready'
+                  ? 'Video ready — tap to play'
                   : 'Video upload pending';
 
               return Card(
@@ -100,15 +100,36 @@ class SosAlertsScreen extends StatelessWidget {
                               ),
                               const SizedBox(height: 14),
                               Text(
-                                'Media link',
+                                'SOS Recording',
                                 style: Theme.of(dialogContext)
                                     .textTheme
                                     .titleSmall
                                     ?.copyWith(fontWeight: FontWeight.w700),
                               ),
-                              const SizedBox(height: 6),
+                              const SizedBox(height: 8),
                               if (mediaUrl != null && mediaUrl.isNotEmpty)
-                                SelectableText(mediaUrl)
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: FilledButton.icon(
+                                    onPressed: () {
+                                      Navigator.pop(dialogContext);
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) => VideoPlayerScreen(
+                                            videoUrl: mediaUrl,
+                                            title: 'SOS from ${alert.sourceName}',
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                    icon: const Icon(Icons.play_circle_outline),
+                                    label: const Text('Play Video'),
+                                    style: FilledButton.styleFrom(
+                                      backgroundColor: Colors.red,
+                                    ),
+                                  ),
+                                )
                               else
                                 const Text(
                                   'The 15 second video is still uploading or waiting for internet sync.',
@@ -117,24 +138,6 @@ class SosAlertsScreen extends StatelessWidget {
                           ),
                         ),
                         actions: [
-                          if (mediaUrl != null && mediaUrl.isNotEmpty)
-                            TextButton.icon(
-                              onPressed: () async {
-                                await Clipboard.setData(
-                                  ClipboardData(text: mediaUrl),
-                                );
-                                if (!context.mounted) {
-                                  return;
-                                }
-                                messenger.showSnackBar(
-                                  const SnackBar(
-                                    content: Text('Video link copied.'),
-                                  ),
-                                );
-                              },
-                              icon: const Icon(Icons.copy_all_outlined),
-                              label: const Text('Copy video link'),
-                            ),
                           TextButton(
                             onPressed: () => Navigator.pop(dialogContext),
                             child: const Text('Close'),

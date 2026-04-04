@@ -206,6 +206,8 @@ service cloud.firestore {
             !('role' in request.resource.data) &&
             !('role' in resource.data)
           ) || (
+            request.resource.data.role == 'user'
+          ) || (
             'role' in request.resource.data &&
             'role' in resource.data &&
             request.resource.data.role == resource.data.role

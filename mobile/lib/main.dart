@@ -1,10 +1,10 @@
 import 'dart:async';
 
-import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'home_page.dart';
@@ -22,17 +22,10 @@ import 'services/user_service.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Load secrets from .env before initializing anything else.
+  await dotenv.load(fileName: '.env');
+
   await Firebase.initializeApp();
-  try {
-    await FirebaseAppCheck.instance.activate(
-      providerAndroid: kDebugMode
-          ? const AndroidDebugProvider()
-          : const AndroidPlayIntegrityProvider(),
-    );
-  } catch (e, stackTrace) {
-    debugPrint('Failed to activate Firebase App Check: $e');
-    debugPrintStack(stackTrace: stackTrace);
-  }
 
   try {
     await SosBackgroundTaskHandler.instance.initialize();
@@ -169,9 +162,14 @@ class _RootDeciderState extends State<RootDecider> {
         if (user == null) {
           return const LoginScreen();
         }
+
+        // Catch unverified users and redirect them to the auto-check screen
         if (AuthAccountService.requiresEmailVerification(user)) {
           return const EmailVerificationScreen();
         }
+
+        // Phone OTP is now handled inside the signup flow.
+        // Users reach HomePage only after complete registration.
         if (_permissionsGranted!) {
           return const HomePage();
         }

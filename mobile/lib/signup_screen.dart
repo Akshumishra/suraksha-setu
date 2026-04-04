@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -9,6 +10,7 @@ import 'permission_screen.dart';
 import 'screens/email_verification_screen.dart';
 import 'services/auth_account_service.dart';
 import 'services/user_service.dart';
+import 'utils/password_validator.dart';
 
 class SignupScreen extends StatefulWidget {
   const SignupScreen({super.key});
@@ -18,11 +20,9 @@ class SignupScreen extends StatefulWidget {
 }
 
 class _SignupScreenState extends State<SignupScreen> {
-  static const String _googleWebClientId = String.fromEnvironment(
-    'GOOGLE_WEB_CLIENT_ID',
-    defaultValue:
-        '179434683012-pub4jlck9oljt5g9dr3iojtihcs8m8c8.apps.googleusercontent.com',
-  );
+  static String get _googleWebClientId =>
+      dotenv.env['GOOGLE_WEB_CLIENT_ID'] ??
+      '179434683012-pub4jlck9oljt5g9dr3iojtihcs8m8c8.apps.googleusercontent.com';
   static const List<String> _genderOptions = <String>[
     'Female',
     'Male',
@@ -103,15 +103,6 @@ class _SignupScreenState extends State<SignupScreen> {
     }
   }
 
-  Future<void> _goToEmailVerification() async {
-    if (!mounted) {
-      return;
-    }
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (_) => const EmailVerificationScreen()),
-    );
-  }
 
   String _firebaseAuthMessage(FirebaseAuthException e) {
     switch (e.code) {
@@ -187,10 +178,17 @@ class _SignupScreenState extends State<SignupScreen> {
         age: age,
         city: city,
       );
-      await AuthAccountService.sendEmailVerification(user: credential.user);
-      _showSnackBar('Verification email sent. Check your inbox.');
 
-      await _goToEmailVerification();
+      // Send verification email and navigate to verification screen
+      await AuthAccountService.sendEmailVerification(user: credential.user);
+      _showSnackBar('Verification email sent to $email');
+
+      if (!mounted) return;
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const EmailVerificationScreen()),
+        (route) => false,
+      );
     } on FirebaseAuthException catch (e) {
       _showSnackBar(_firebaseAuthMessage(e));
     } catch (e) {
@@ -347,14 +345,7 @@ class _SignupScreenState extends State<SignupScreen> {
     if (!_requireEmailPassword) {
       return null;
     }
-    final trimmed = (value ?? '').trim();
-    if (trimmed.isEmpty) {
-      return 'Enter a password';
-    }
-    if (trimmed.length < 6) {
-      return 'Minimum 6 characters';
-    }
-    return null;
+    return PasswordValidator.validate(value);
   }
 
   Widget _sectionTitle(BuildContext context, String title, String subtitle) {
@@ -380,7 +371,7 @@ class _SignupScreenState extends State<SignupScreen> {
 
   Widget _buildGenderAndAgeFields() {
     final genderField = DropdownButtonFormField<String>(
-      initialValue: _selectedGender,
+      value: _selectedGender,
       isExpanded: true,
       decoration: _inputDecoration(
         label: 'Gender',

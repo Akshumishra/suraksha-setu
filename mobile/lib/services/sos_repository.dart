@@ -24,7 +24,11 @@ class SosRepository {
   }
 
   Stream<List<SosCase>> watchUserSosHistory() {
-    final userId = _requireUserId();
+    final user = _auth.currentUser;
+    if (user == null) {
+      return Stream.value(<SosCase>[]);
+    }
+    final userId = user.uid;
     return _sosCollection
         .where('userId', isEqualTo: userId)
         .snapshots()

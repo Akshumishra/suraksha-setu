@@ -34,7 +34,7 @@ class SosAlertNotificationService {
   String? _activeUserId;
   Set<String> _notifiedIds = <String>{};
 
-  Future<void> initialize() async {
+  Future<void> initialize({bool shouldRequestPermission = true}) async {
     if (_initialized) {
       return;
     }
@@ -47,12 +47,14 @@ class SosAlertNotificationService {
         _plugin.resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>();
     await androidPlugin?.createNotificationChannel(_channel);
-    await androidPlugin?.requestNotificationsPermission();
+    if (shouldRequestPermission) {
+      await androidPlugin?.requestNotificationsPermission();
+    }
     _initialized = true;
   }
 
   Future<void> startForCurrentUser() async {
-    await initialize();
+    await initialize(shouldRequestPermission: true);
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
       await stop();
@@ -73,7 +75,7 @@ class SosAlertNotificationService {
   }
 
   Future<void> pollAndNotifyOnce() async {
-    await initialize();
+    await initialize(shouldRequestPermission: false);
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
       return;

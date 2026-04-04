@@ -490,3 +490,84 @@ exports.updateSosCaseStatus = onCall(async (request) => {
     status: nextStatus,
   };
 });
+
+/**
+ * getSignedMediaUrl - Returns a short-lived signed URL for a Firebase Storage
+ * media file. Only callable by authenticated admins or police officers who are
+ * assigned to the SOS case. The signed URL expires in 15 minutes.
+ */
+exports.getSignedMediaUrl = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Authentication required.");
+  }
+
+  const storagePath = String(request.data?.storagePath || "").trim();
+  const caseId = String(request.data?.caseId || "").trim();
+
+  if (!storagePath) {
+    throw new HttpsError("invalid-argument", "storagePath is required.");
+  }
+
+  const claimRole = String(request.auth.token?.role || "").toLowerCase();
+  const isAdmin =
+    claimRole === "admin" || isBootstrapAdminEmail(request.auth.token?.email);
+  const isPolice = claimRole === "police";
+
+  if (!isAdmin && !isPolice) {
+    // Regular users can only access their own media via direct download URL
+    // (handled client-side with Firebase SDK). Signed URLs are for police/admin.
+    throw new HttpsError(
+        "permission-denied",
+        "Only admins and police can request signed media URLs.",
+    );
+  }
+
+  // If police, verify they are assigned to this specific SOS case.
+  if (isPolice && caseId) {
+    const sosDoc = await db.collection("sos").doc(caseId).get();
+    if (!sosDoc.exists) {
+      throw new HttpsError("not-found", "SOS case not found.");
+    }
+    const assignedStationId = String(
+        sosDoc.data()?.assignedStationId || "",
+    ).trim();
+    const claimStationId = String(
+        request.auth.token?.stationId || "",
+    ).trim();
+    if (assignedStationId !== claimStationId) {
+      throw new HttpsError(
+          "permission-denied",
+          "This SOS case is not assigned to your station.",
+      );
+    }
+  }
+
+  try {
+    const bucket = admin.storage().bucket();
+    const file = bucket.file(storagePath);
+
+    const [exists] = await file.exists();
+    if (!exists) {
+      throw new HttpsError("not-found", "Media file not found in storage.");
+    }
+
+    // Generate a signed URL valid for 15 minutes.
+    const [signedUrl] = await file.getSignedUrl({
+      action: "read",
+      expires: Date.now() + 15 * 60 * 1000, // 15 minutes
+    });
+
+    logger.info("Signed media URL generated", {
+      requestedBy: request.auth.uid,
+      role: claimRole,
+      storagePath,
+      caseId: caseId || "N/A",
+    });
+
+    return {signedUrl, expiresInSeconds: 900};
+  } catch (error) {
+    if (error instanceof HttpsError) throw error;
+    logger.error("Failed to generate signed URL", error);
+    throw new HttpsError("internal", "Could not generate media access URL.");
+  }
+});

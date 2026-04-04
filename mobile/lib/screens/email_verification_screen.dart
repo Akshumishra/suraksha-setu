@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -19,6 +20,22 @@ class EmailVerificationScreen extends StatefulWidget {
 class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
   bool _checking = false;
   bool _sending = false;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    // Start polling for verification status every 3 seconds
+    _timer = Timer.periodic(const Duration(seconds: 3), (timer) {
+      _checkVerification(silent: true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
 
   String get _email => FirebaseAuth.instance.currentUser?.email?.trim() ?? '';
 
@@ -47,21 +64,26 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
     );
   }
 
-  Future<void> _checkVerification() async {
-    setState(() => _checking = true);
+  Future<void> _checkVerification({bool silent = false}) async {
+    if (!silent) setState(() => _checking = true);
     try {
       final verified = await AuthAccountService.reloadAndCheckVerification();
-      if (!verified) {
+      if (verified) {
+        _timer?.cancel();
+        await _continueToApp();
+      } else if (!silent) {
         _showSnackBar('Email is still not verified. Check your inbox first.');
-        return;
       }
-      await _continueToApp();
     } on FirebaseAuthException catch (error) {
-      _showSnackBar(error.message ?? 'Could not refresh verification status.');
+      if (!silent) {
+        _showSnackBar(error.message ?? 'Could not refresh status.');
+      }
     } catch (error) {
-      _showSnackBar('Could not refresh verification status: $error');
+      if (!silent) {
+        _showSnackBar('Could not refresh status: $error');
+      }
     } finally {
-      if (mounted) {
+      if (mounted && !silent) {
         setState(() => _checking = false);
       }
     }

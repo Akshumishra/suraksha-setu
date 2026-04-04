@@ -1,12 +1,13 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'home_page.dart';
-import 'screens/email_verification_screen.dart';
 import 'signup_screen.dart';
 import 'permission_screen.dart';
+import 'screens/email_verification_screen.dart';
 import 'services/auth_account_service.dart';
 import 'services/user_service.dart';
 import 'widgets/suraksha_setu_brand_logo.dart';
@@ -19,11 +20,9 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  static const String _googleWebClientId = String.fromEnvironment(
-    'GOOGLE_WEB_CLIENT_ID',
-    defaultValue:
-        '179434683012-pub4jlck9oljt5g9dr3iojtihcs8m8c8.apps.googleusercontent.com',
-  );
+  static String get _googleWebClientId =>
+      dotenv.env['GOOGLE_WEB_CLIENT_ID'] ??
+      '179434683012-pub4jlck9oljt5g9dr3iojtihcs8m8c8.apps.googleusercontent.com';
 
   final TextEditingController emailController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
@@ -45,16 +44,6 @@ class _LoginScreenState extends State<LoginScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
-  }
-
-  Future<void> _goToEmailVerification() async {
-    if (!mounted) {
-      return;
-    }
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (_) => const EmailVerificationScreen()),
-    );
   }
 
   Future<void> _saveProfileBestEffort({String? email}) async {
@@ -122,17 +111,17 @@ class _LoginScreenState extends State<LoginScreen> {
         password: passwordController.text.trim(),
       );
       await _saveProfileBestEffort(email: email);
+
+      if (!mounted) return;
       if (AuthAccountService.requiresEmailVerification(credential.user)) {
-        try {
-          await AuthAccountService.sendEmailVerification(user: credential.user);
-        } catch (_) {
-          // The verification screen still lets the user resend if needed.
-        }
-        _showSnackBar('Verify your email before continuing.');
-        await _goToEmailVerification();
-        return;
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => const EmailVerificationScreen()),
+          (route) => false,
+        );
+      } else {
+        await _goToNextScreen();
       }
-      await _goToNextScreen();
     } on FirebaseAuthException catch (e) {
       _showSnackBar(_firebaseAuthMessage(e));
     } catch (_) {
@@ -238,9 +227,19 @@ class _LoginScreenState extends State<LoginScreen> {
         idToken: googleAuth.idToken,
       );
 
-      await _auth.signInWithCredential(credential);
+      final userCredential = await _auth.signInWithCredential(credential);
       await _saveProfileBestEffort();
-      await _goToNextScreen();
+
+      if (!mounted) return;
+      if (AuthAccountService.requiresEmailVerification(userCredential.user)) {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => const EmailVerificationScreen()),
+          (route) => false,
+        );
+      } else {
+        await _goToNextScreen();
+      }
     } on FirebaseAuthException catch (e) {
       _showSnackBar(_firebaseAuthMessage(e));
     } on PlatformException catch (e) {
