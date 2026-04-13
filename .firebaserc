@@ -1,5 +1,17 @@
 {
   "projects": {
     "default": "suraksha-setu-9808d"
+  },
+  "targets": {
+    "suraksha-setu-9808d": {
+      "hosting": {
+        "main": [
+          "suraksha-setu-9808d"
+        ],
+        "police": [
+          "suraksha-setu-police"
+        ]
+      }
+    }
   }
 }
